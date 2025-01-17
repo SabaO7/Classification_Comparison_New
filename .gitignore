@@ -1,0 +1,6 @@
+.env
+venv/
+data/raw/Suicide_Detection.csv
+src/outputs/comparison/results/preprocessed_data_20250106_140832.csv
+data/tokenized/tokenized_data.pkl
+outputs

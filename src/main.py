@@ -118,6 +118,29 @@ class ClassificationPipeline:
             self.logger.error(f"Error loading raw data: {str(e)}")
             raise
 
+    def validate_tokenized_data(self, tokenized_file: str):
+        """Loads tokenized data from PyTorch format and validates it."""
+        try:
+            # ✅ Load tokenized data correctly
+            data_dict = torch.load(tokenized_file)
+            df = pd.DataFrame.from_dict(data_dict)
+
+            # ✅ Check for valid tokenized format
+            invalid_rows = df[df["tokenized"].apply(lambda x: not isinstance(x, dict) or "input_ids" not in x)]
+            if not invalid_rows.empty:
+                self.logger.warning(f"⚠️ Found {len(invalid_rows)} invalid rows in tokenized dataset!")
+                print(invalid_rows.head(5))
+                raise ValueError("Tokenized dataset contains improperly formatted rows!")
+
+            self.logger.info(f"✅ Tokenized dataset is correctly formatted with {len(df)} samples.")
+
+            return df
+
+        except Exception as e:
+            self.logger.error(f"❌ Error loading tokenized data: {str(e)}")
+            raise
+
+
     def run_pipeline(
         self, 
         raw_file: str, 

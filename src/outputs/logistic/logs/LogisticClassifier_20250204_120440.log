@@ -1,0 +1,136 @@
+2025-02-04 12:04:40,794 - LogisticClassifier - INFO - Logging initialized. Log file: outputs/logistic/logs/LogisticClassifier_20250204_120440.log
+2025-02-04 12:04:40,794 - LogisticClassifier - INFO - Starting model training pipeline...
+2025-02-04 12:04:40,794 - LogisticClassifier - INFO - Performing initial train-test split...
+2025-02-04 12:04:41,241 - LogisticClassifier - INFO - 
+Data Split Information:
+2025-02-04 12:04:41,242 - LogisticClassifier - INFO - Training set size: 185659
+2025-02-04 12:04:41,242 - LogisticClassifier - INFO - Test set size: 46415
+2025-02-04 12:04:41,244 - LogisticClassifier - INFO - Training class distribution:
+suicide        0.500003
+non-suicide    0.499997
+Name: proportion, dtype: float64
+2025-02-04 12:04:41,244 - LogisticClassifier - INFO - Test class distribution:
+non-suicide    0.500011
+suicide        0.499989
+Name: proportion, dtype: float64
+2025-02-04 12:04:41,244 - LogisticClassifier - INFO - Starting cross-validation...
+2025-02-04 12:04:41,394 - LogisticClassifier - INFO - 
+Training fold 1/5
+2025-02-04 12:04:41,682 - LogisticClassifier - DEBUG - Fold 0 sizes - Train: 148527, Val: 37132
+2025-02-04 12:04:41,683 - LogisticClassifier - INFO - Training fold 1
+2025-02-04 12:04:41,683 - LogisticClassifier - INFO - Training set size: 148527, Validation set size: 37132
+2025-02-04 12:04:41,683 - LogisticClassifier - DEBUG - Original label types - Training: <class 'str'>, Validation: <class 'str'>
+2025-02-04 12:04:41,736 - LogisticClassifier - DEBUG - Original unique labels - Training: ['non-suicide' 'suicide'], Validation: ['non-suicide' 'suicide']
+2025-02-04 12:04:41,747 - LogisticClassifier - INFO - Converted string labels to numeric (1 = suicide, 0 = non-suicide)
+2025-02-04 12:04:41,747 - LogisticClassifier - DEBUG - Final label types - Training: <class 'numpy.int64'>, Validation: <class 'numpy.int64'>
+2025-02-04 12:04:41,749 - LogisticClassifier - DEBUG - Final unique labels - Training: [0 1], Validation: [0 1]
+2025-02-04 12:04:41,749 - LogisticClassifier - INFO - Preprocessing training data...
+2025-02-04 12:04:41,749 - LogisticClassifier - INFO - Number of texts: 148527
+2025-02-04 12:04:41,749 - LogisticClassifier - INFO - Initializing and fitting TF-IDF vectorizer...
+2025-02-04 12:04:49,320 - LogisticClassifier - INFO - Vocabulary size: 3000
+2025-02-04 12:04:49,321 - LogisticClassifier - INFO - Preprocessing evaluation data...
+2025-02-04 12:04:49,321 - LogisticClassifier - INFO - Number of texts: 37132
+2025-02-04 12:04:51,232 - LogisticClassifier - INFO - Training Logistic Regression model...
+2025-02-04 12:04:52,921 - LogisticClassifier - INFO - Fold 1 metrics: {'accuracy': 0.9341268986319078, 'precision': 0.9407743629005797, 'recall': 0.9265862328988473, 'f1': 0.9336263974818192, 'roc_auc': nan}
+2025-02-04 12:04:52,926 - LogisticClassifier - INFO - Saved fold model to outputs/logistic/models/artifacts/logistic_model_fold_0_20250204_120440.joblib
+2025-02-04 12:04:52,926 - LogisticClassifier - INFO - Fold 0 metrics: {'accuracy': 0.9341268986319078, 'precision': 0.9407743629005797, 'recall': 0.9265862328988473, 'f1': 0.9336263974818192, 'roc_auc': nan, 'fold': 0}
+2025-02-04 12:04:52,929 - LogisticClassifier - INFO - 
+Training fold 2/5
+2025-02-04 12:04:53,096 - LogisticClassifier - DEBUG - Fold 1 sizes - Train: 148527, Val: 37132
+2025-02-04 12:04:53,096 - LogisticClassifier - INFO - Training fold 2
+2025-02-04 12:04:53,096 - LogisticClassifier - INFO - Training set size: 148527, Validation set size: 37132
+2025-02-04 12:04:53,096 - LogisticClassifier - DEBUG - Original label types - Training: <class 'str'>, Validation: <class 'str'>
+2025-02-04 12:04:53,145 - LogisticClassifier - DEBUG - Original unique labels - Training: ['non-suicide' 'suicide'], Validation: ['non-suicide' 'suicide']
+2025-02-04 12:04:53,156 - LogisticClassifier - INFO - Converted string labels to numeric (1 = suicide, 0 = non-suicide)
+2025-02-04 12:04:53,156 - LogisticClassifier - DEBUG - Final label types - Training: <class 'numpy.int64'>, Validation: <class 'numpy.int64'>
+2025-02-04 12:04:53,157 - LogisticClassifier - DEBUG - Final unique labels - Training: [0 1], Validation: [0 1]
+2025-02-04 12:04:53,157 - LogisticClassifier - INFO - Preprocessing training data...
+2025-02-04 12:04:53,157 - LogisticClassifier - INFO - Number of texts: 148527
+2025-02-04 12:05:00,590 - LogisticClassifier - INFO - Preprocessing evaluation data...
+2025-02-04 12:05:00,591 - LogisticClassifier - INFO - Number of texts: 37132
+2025-02-04 12:05:02,486 - LogisticClassifier - INFO - Training Logistic Regression model...
+2025-02-04 12:05:04,101 - LogisticClassifier - INFO - Fold 2 metrics: {'accuracy': 0.9327264892814823, 'precision': 0.9407988587731811, 'recall': 0.9235699666056232, 'f1': 0.9321048053924766, 'roc_auc': nan}
+2025-02-04 12:05:04,104 - LogisticClassifier - INFO - Saved fold model to outputs/logistic/models/artifacts/logistic_model_fold_1_20250204_120440.joblib
+2025-02-04 12:05:04,105 - LogisticClassifier - INFO - Fold 1 metrics: {'accuracy': 0.9327264892814823, 'precision': 0.9407988587731811, 'recall': 0.9235699666056232, 'f1': 0.9321048053924766, 'roc_auc': nan, 'fold': 1}
+2025-02-04 12:05:04,107 - LogisticClassifier - INFO - 
+Training fold 3/5
+2025-02-04 12:05:04,269 - LogisticClassifier - DEBUG - Fold 2 sizes - Train: 148527, Val: 37132
+2025-02-04 12:05:04,269 - LogisticClassifier - INFO - Training fold 3
+2025-02-04 12:05:04,269 - LogisticClassifier - INFO - Training set size: 148527, Validation set size: 37132
+2025-02-04 12:05:04,269 - LogisticClassifier - DEBUG - Original label types - Training: <class 'str'>, Validation: <class 'str'>
+2025-02-04 12:05:04,320 - LogisticClassifier - DEBUG - Original unique labels - Training: ['non-suicide' 'suicide'], Validation: ['non-suicide' 'suicide']
+2025-02-04 12:05:04,331 - LogisticClassifier - INFO - Converted string labels to numeric (1 = suicide, 0 = non-suicide)
+2025-02-04 12:05:04,331 - LogisticClassifier - DEBUG - Final label types - Training: <class 'numpy.int64'>, Validation: <class 'numpy.int64'>
+2025-02-04 12:05:04,332 - LogisticClassifier - DEBUG - Final unique labels - Training: [0 1], Validation: [0 1]
+2025-02-04 12:05:04,332 - LogisticClassifier - INFO - Preprocessing training data...
+2025-02-04 12:05:04,332 - LogisticClassifier - INFO - Number of texts: 148527
+2025-02-04 12:05:11,760 - LogisticClassifier - INFO - Preprocessing evaluation data...
+2025-02-04 12:05:11,761 - LogisticClassifier - INFO - Number of texts: 37132
+2025-02-04 12:05:13,816 - LogisticClassifier - INFO - Training Logistic Regression model...
+2025-02-04 12:05:15,383 - LogisticClassifier - INFO - Fold 3 metrics: {'accuracy': 0.9308413228482172, 'precision': 0.9389266900790166, 'recall': 0.9216309382742648, 'f1': 0.9301984234846425, 'roc_auc': nan}
+2025-02-04 12:05:15,386 - LogisticClassifier - INFO - Saved fold model to outputs/logistic/models/artifacts/logistic_model_fold_2_20250204_120440.joblib
+2025-02-04 12:05:15,387 - LogisticClassifier - INFO - Fold 2 metrics: {'accuracy': 0.9308413228482172, 'precision': 0.9389266900790166, 'recall': 0.9216309382742648, 'f1': 0.9301984234846425, 'roc_auc': nan, 'fold': 2}
+2025-02-04 12:05:15,391 - LogisticClassifier - INFO - 
+Training fold 4/5
+2025-02-04 12:05:15,584 - LogisticClassifier - DEBUG - Fold 3 sizes - Train: 148527, Val: 37132
+2025-02-04 12:05:15,585 - LogisticClassifier - INFO - Training fold 4
+2025-02-04 12:05:15,585 - LogisticClassifier - INFO - Training set size: 148527, Validation set size: 37132
+2025-02-04 12:05:15,585 - LogisticClassifier - DEBUG - Original label types - Training: <class 'str'>, Validation: <class 'str'>
+2025-02-04 12:05:15,638 - LogisticClassifier - DEBUG - Original unique labels - Training: ['non-suicide' 'suicide'], Validation: ['non-suicide' 'suicide']
+2025-02-04 12:05:15,649 - LogisticClassifier - INFO - Converted string labels to numeric (1 = suicide, 0 = non-suicide)
+2025-02-04 12:05:15,649 - LogisticClassifier - DEBUG - Final label types - Training: <class 'numpy.int64'>, Validation: <class 'numpy.int64'>
+2025-02-04 12:05:15,650 - LogisticClassifier - DEBUG - Final unique labels - Training: [0 1], Validation: [0 1]
+2025-02-04 12:05:15,650 - LogisticClassifier - INFO - Preprocessing training data...
+2025-02-04 12:05:15,650 - LogisticClassifier - INFO - Number of texts: 148527
+2025-02-04 12:05:23,135 - LogisticClassifier - INFO - Preprocessing evaluation data...
+2025-02-04 12:05:23,136 - LogisticClassifier - INFO - Number of texts: 37132
+2025-02-04 12:05:25,202 - LogisticClassifier - INFO - Training Logistic Regression model...
+2025-02-04 12:05:26,537 - LogisticClassifier - INFO - Fold 4 metrics: {'accuracy': 0.9349348271033071, 'precision': 0.9412086110807562, 'recall': 0.927825056554993, 'f1': 0.934468916133232, 'roc_auc': nan}
+2025-02-04 12:05:26,540 - LogisticClassifier - INFO - Saved fold model to outputs/logistic/models/artifacts/logistic_model_fold_3_20250204_120440.joblib
+2025-02-04 12:05:26,540 - LogisticClassifier - INFO - Fold 3 metrics: {'accuracy': 0.9349348271033071, 'precision': 0.9412086110807562, 'recall': 0.927825056554993, 'f1': 0.934468916133232, 'roc_auc': nan, 'fold': 3}
+2025-02-04 12:05:26,543 - LogisticClassifier - INFO - 
+Training fold 5/5
+2025-02-04 12:05:26,687 - LogisticClassifier - DEBUG - Fold 4 sizes - Train: 148528, Val: 37131
+2025-02-04 12:05:26,687 - LogisticClassifier - INFO - Training fold 5
+2025-02-04 12:05:26,687 - LogisticClassifier - INFO - Training set size: 148528, Validation set size: 37131
+2025-02-04 12:05:26,687 - LogisticClassifier - DEBUG - Original label types - Training: <class 'str'>, Validation: <class 'str'>
+2025-02-04 12:05:26,751 - LogisticClassifier - DEBUG - Original unique labels - Training: ['non-suicide' 'suicide'], Validation: ['non-suicide' 'suicide']
+2025-02-04 12:05:26,761 - LogisticClassifier - INFO - Converted string labels to numeric (1 = suicide, 0 = non-suicide)
+2025-02-04 12:05:26,761 - LogisticClassifier - DEBUG - Final label types - Training: <class 'numpy.int64'>, Validation: <class 'numpy.int64'>
+2025-02-04 12:05:26,761 - LogisticClassifier - DEBUG - Final unique labels - Training: [0 1], Validation: [0 1]
+2025-02-04 12:05:26,762 - LogisticClassifier - INFO - Preprocessing training data...
+2025-02-04 12:05:26,762 - LogisticClassifier - INFO - Number of texts: 148528
+2025-02-04 12:05:34,307 - LogisticClassifier - INFO - Preprocessing evaluation data...
+2025-02-04 12:05:34,308 - LogisticClassifier - INFO - Number of texts: 37131
+2025-02-04 12:05:36,283 - LogisticClassifier - INFO - Training Logistic Regression model...
+2025-02-04 12:05:38,042 - LogisticClassifier - INFO - Fold 5 metrics: {'accuracy': 0.9323476340524091, 'precision': 0.9392579621319908, 'recall': 0.9244856188732091, 'f1': 0.9318132464712269, 'roc_auc': nan}
+2025-02-04 12:05:38,046 - LogisticClassifier - INFO - Saved fold model to outputs/logistic/models/artifacts/logistic_model_fold_4_20250204_120440.joblib
+2025-02-04 12:05:38,046 - LogisticClassifier - INFO - Fold 4 metrics: {'accuracy': 0.9323476340524091, 'precision': 0.9392579621319908, 'recall': 0.9244856188732091, 'f1': 0.9318132464712269, 'roc_auc': nan, 'fold': 4}
+2025-02-04 12:05:38,047 - LogisticClassifier - INFO - Best configuration from fold 4: {'max_iter': 1000, 'class_weight': 'balanced', 'vocab_size': 3000, 'fold': 3}
+2025-02-04 12:05:38,048 - LogisticClassifier - INFO - Training final model on full training set...
+2025-02-04 12:05:38,048 - LogisticClassifier - INFO - Training final model on complete training set...
+2025-02-04 12:05:38,048 - LogisticClassifier - INFO - Training set size: 185659
+2025-02-04 12:05:38,048 - LogisticClassifier - INFO - Preprocessing training data...
+2025-02-04 12:05:38,048 - LogisticClassifier - INFO - Number of texts: 185659
+2025-02-04 12:05:47,672 - LogisticClassifier - INFO - Fitting final model...
+2025-02-04 12:05:49,276 - LogisticClassifier - INFO - Saved final model to outputs/logistic_model_final_20250204_120440.joblib
+2025-02-04 12:05:49,277 - LogisticClassifier - INFO - Saved vectorizer to outputs/tfidf_vectorizer_20250204_120440.joblib
+2025-02-04 12:05:49,280 - LogisticClassifier - INFO - Evaluating on held-out test set...
+2025-02-04 12:05:49,280 - LogisticClassifier - INFO - Evaluating on test set...
+2025-02-04 12:05:49,280 - LogisticClassifier - INFO - Test set size: 46415
+2025-02-04 12:05:49,280 - LogisticClassifier - INFO - Preprocessing evaluation data...
+2025-02-04 12:05:49,280 - LogisticClassifier - INFO - Number of texts: 46415
+2025-02-04 12:05:51,796 - LogisticClassifier - INFO - Test set metrics: {'accuracy': 0.9330604330496607, 'precision': 0.94044175650802, 'recall': 0.9246778989098117, 'f1': 0.9324932102118414, 'roc_auc': np.float64(0.9808220988472868)}
+2025-02-04 12:05:52,337 - LogisticClassifier - INFO - Final test metrics: {'accuracy': 0.9330604330496607, 'precision': 0.94044175650802, 'recall': 0.9246778989098117, 'f1': 0.9324932102118414, 'roc_auc': np.float64(0.9808220988472868)}
+2025-02-04 12:05:52,339 - LogisticClassifier - INFO - Calculated aggregate metrics:
+2025-02-04 12:05:52,339 - LogisticClassifier - INFO - accuracy: 0.9330 ± 0.0016
+2025-02-04 12:05:52,339 - LogisticClassifier - INFO - precision: 0.9402 ± 0.0010
+2025-02-04 12:05:52,339 - LogisticClassifier - INFO - recall: 0.9248 ± 0.0024
+2025-02-04 12:05:52,339 - LogisticClassifier - INFO - f1: 0.9324 ± 0.0017
+2025-02-04 12:05:52,339 - LogisticClassifier - INFO - roc_auc: nan ± nan
+2025-02-04 12:05:52,339 - LogisticClassifier - INFO - fold: 2.0000 ± 1.5811
+2025-02-04 12:05:52,340 - LogisticClassifier - INFO - Saved fold results to outputs/logistic/metrics/LogisticClassifier_cv_fold_results_20250204_120440.csv
+2025-02-04 12:05:52,341 - LogisticClassifier - INFO - Metrics saved to outputs/logistic/metrics/LogisticClassifier_test_20250204_120440.json
+2025-02-04 12:05:52,341 - LogisticClassifier - INFO - Metrics saved to outputs/logistic/metrics/LogisticClassifier_cv_mean_20250204_120440.json
+2025-02-04 12:05:52,341 - LogisticClassifier - INFO - Metrics saved to outputs/logistic/metrics/LogisticClassifier_cv_std_20250204_120440.json
+2025-02-04 12:05:52,341 - LogisticClassifier - INFO - Training pipeline completed successfully!

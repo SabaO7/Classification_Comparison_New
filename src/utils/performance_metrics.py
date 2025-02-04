@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 from scipy import stats
 from typing import List
 import json
+from datetime import datetime
+
 
 
 
@@ -28,6 +30,7 @@ class PerformanceMetrics:
         """
         self.results = []
         self.output_dir = output_dir
+        self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S") 
         os.makedirs(output_dir, exist_ok=True)
 
     def track_performance(self, classifier_name: str, func, *args, **kwargs):

@@ -41,40 +41,35 @@ print(f"Loaded dataset with {len(full_dataset)} rows.")
 
 
 class TextDataset(Dataset):
-    """
-    Dataset class for BERT model with tokenized data.
-    
-    We accept an existing DataFrame to avoid re-reading
-    from disk for each fold. The DataFrame must have:
-      - "tokenized": a dict of {input_ids, attention_mask, ...}
-      - "class": either 'suicide' or 'non-suicide'
-    """
     def __init__(self, dataframe: pd.DataFrame):
-        """
-        Initialize dataset from a pre-loaded DataFrame.
-        """
         self.data = dataframe.copy()
 
-        # ✅ Ensure tokenized column exists and is not empty
         if "tokenized" not in self.data.columns:
             raise ValueError("Dataset is missing 'tokenized' column.")
 
-        # ✅ Drop rows with missing tokenized data
         self.data = self.data.dropna(subset=["tokenized"]).reset_index(drop=True)
-
         print(f"✅ Loaded dataset with {len(self.data)} valid rows.")
 
     def __getitem__(self, idx: int) -> Dict:
-        """Retrieve pre-tokenized item by index."""
         record = self.data.iloc[idx]
 
         try:
-            # ✅ Ensure the tokenized data is valid
+            # ✅ Ensure tokenized data is a dictionary
             if not isinstance(record["tokenized"], dict):
                 raise ValueError(f"Invalid tokenized format at index {idx}: {record['tokenized']}")
 
+            # ✅ Convert tokenized data into PyTorch tensors correctly
+            item = {
+                "input_ids": torch.tensor(record["tokenized"]["input_ids"], dtype=torch.long),
+                "attention_mask": torch.tensor(record["tokenized"]["attention_mask"], dtype=torch.long),
+            }
+
+            # ✅ Handle `token_type_ids` safely
+            if "token_type_ids" in record["tokenized"] and record["tokenized"]["token_type_ids"] is not None:
+                item["token_type_ids"] = torch.tensor(record["tokenized"]["token_type_ids"], dtype=torch.long)
+
+            # ✅ Ensure labels are integers
             label = 1 if record["class"] == "suicide" else 0
-            item = {key: torch.tensor(val) for key, val in record["tokenized"].items()}
             item["labels"] = torch.tensor(label, dtype=torch.long)
 
             return item
@@ -82,8 +77,6 @@ class TextDataset(Dataset):
             print(f"❌ Error processing record {idx}: {e}")
             raise
 
-    def __len__(self):
-        return len(self.data)
 
 
 class BERTClassifier(BaseClassifier):
@@ -198,6 +191,16 @@ class BERTClassifier(BaseClassifier):
             val_subset = Subset(dataset, val_idx)
 
             # -------------------------------------------------
+            # ✅ Validate tokenized data before training
+            # -------------------------------------------------
+            for idx in train_idx[:5]:  # Check a few samples to catch potential issues early
+                record = dataset[idx]
+                if not isinstance(record, dict) or "input_ids" not in record or "attention_mask" not in record:
+                    raise ValueError(f"Invalid tokenized format at index {idx}: {record}")
+
+            self.logger.info(f"✅ Tokenized data successfully validated for fold {fold + 1}")
+
+            # -------------------------------------------------
             # ✅ Load Pretrained BERT Model for Classification
             # -------------------------------------------------
             model = AutoModelForSequenceClassification.from_pretrained(
@@ -242,7 +245,6 @@ class BERTClassifier(BaseClassifier):
                 compute_metrics=self.compute_metrics # Function to compute performance metrics
             )
 
-
             # -------------------------------------------------
             # ✅ Train and Evaluate Model
             # -------------------------------------------------
@@ -267,6 +269,11 @@ class BERTClassifier(BaseClassifier):
             # ✅ Return trained model, metrics, and arguments
             # -------------------------------------------------
             return model, cleaned_metrics, training_args.to_dict()
+
+        except ValueError as e:
+            # ❌ Log issues related to tokenized data
+            self.logger.error(f"❌ Tokenization issue in fold {fold}: {str(e)}")
+            raise
 
         except Exception as e:
             # ❌ Log any errors that occur during training
@@ -317,7 +324,7 @@ class BERTClassifier(BaseClassifier):
 
         try:
             # Just reuse the single loaded DataFrame if you want all data
-            final_dataset = TextDataset(full_df)
+            final_dataset = TextDataset(full_dataset)
 
             model = AutoModelForSequenceClassification.from_pretrained(
                 "prajjwal1/bert-tiny", num_labels=2

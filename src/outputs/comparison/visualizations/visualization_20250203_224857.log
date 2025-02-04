@@ -1,4 +1,0 @@
-2025-02-03 22:48:57,115 - utils.visualization - INFO - Logging setup complete
-2025-02-03 22:48:57,115 - utils.visualization - INFO - Initialized VisualizationManager with output dir: outputs/comparison/visualizations
-2025-02-03 22:50:44,460 - utils.visualization - INFO - Plotting ROC curve for logistic - Final
-2025-02-03 22:50:45,366 - utils.visualization - ERROR - Error plotting ROC curve: y_true takes value in {'non-suicide', 'suicide'} and pos_label is not specified: either make y_true take value in {0, 1} or {-1, 1} or pass pos_label explicitly.

@@ -1,0 +1,4 @@
+2025-02-04 12:04:28,056 - utils.visualization - INFO - Logging setup complete
+2025-02-04 12:04:28,056 - utils.visualization - INFO - Initialized VisualizationManager with output dir: outputs/comparison/visualizations
+2025-02-04 12:05:52,400 - utils.visualization - INFO - Plotting ROC curve for logistic - Final
+2025-02-04 12:06:13,507 - utils.visualization - INFO - Saved plot to outputs/comparison/visualizations/roc_curve_logistic_final_20250204_120428.png

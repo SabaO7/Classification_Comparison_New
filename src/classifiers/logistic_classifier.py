@@ -128,15 +128,16 @@ class LogisticClassifier(BaseClassifier):
         self.logger.debug(f"Original label types - Training: {type(y_train[0])}, Validation: {type(y_val[0])}")
         self.logger.debug(f"Original unique labels - Training: {np.unique(y_train)}, Validation: {np.unique(y_val)}")
     
-        # Convert labels if they're numeric
-        if isinstance(y_train[0], (int, np.integer)):
-            y_train = np.array(['suicide' if label == 1 else 'non-suicide' for label in y_train])
-            y_val = np.array(['suicide' if label == 1 else 'non-suicide' for label in y_val])
-            self.logger.info("Converted numeric labels to string labels")
-        
-        # Log final label information
+        # Convert labels to numeric values (if they are still strings)
+        if isinstance(y_train[0], str):
+            y_train = np.array([1 if label == "suicide" else 0 for label in y_train], dtype=int)
+            y_val = np.array([1 if label == "suicide" else 0 for label in y_val], dtype=int)
+            self.logger.info("Converted string labels to numeric (1 = suicide, 0 = non-suicide)")
+
+        # Log label types
+        self.logger.debug(f"Final label types - Training: {type(y_train[0])}, Validation: {type(y_val[0])}")
         self.logger.debug(f"Final unique labels - Training: {np.unique(y_train)}, Validation: {np.unique(y_val)}")
-    
+
         # Preprocess data
         X_train_vec = self.preprocess_data(X_train, is_training=True)
         X_val_vec = self.preprocess_data(X_val, is_training=False)
@@ -158,10 +159,10 @@ class LogisticClassifier(BaseClassifier):
             # Calculate metrics
             metrics = {
                 'accuracy': accuracy_score(y_val, y_pred),
-                'precision': precision_score(y_val, y_pred, pos_label='suicide'),
-                'recall': recall_score(y_val, y_pred, pos_label='suicide'),
-                'f1': f1_score(y_val, y_pred, pos_label='suicide'),
-                'roc_auc': roc_auc_score((y_val == 'suicide').astype(int), y_prob)
+                'precision': precision_score(y_val, y_pred, pos_label=1),
+                'recall': recall_score(y_val, y_pred, pos_label=1),
+                'f1': f1_score(y_val, y_pred, pos_label=1),
+                'roc_auc': roc_auc_score(np.array([1 if label == "suicide" else 0 for label in y_val]), y_prob)
             }
         
             self.logger.info(f"Fold {fold+1} metrics: {metrics}")
@@ -196,36 +197,39 @@ class LogisticClassifier(BaseClassifier):
 
 
     def train_final_model(self,
-                         X_train: List[str],
-                         y_train: np.ndarray,
-                         config: Dict) -> LogisticRegression:
+                        X_train: List[str],
+                        y_train: np.ndarray,
+                        config: Dict) -> LogisticRegression:
         """
-        Train final model on entire training set
+        Train final model on entire training set.
         
         Args:
-            X_train: Training texts
-            y_train: Training labels
-            config: Best configuration from CV
+            X_train: Training texts.
+            y_train: Training labels.
+            config: Best configuration from CV.
             
         Returns:
-            LogisticRegression: Trained final model
+            LogisticRegression: Trained final model.
         """
         self.logger.info("Training final model on complete training set...")
         self.logger.info(f"Training set size: {len(X_train)}")
-        
+
         # Preprocess data
         X_train_vec = self.preprocess_data(X_train, is_training=True)
-        
+
         # Initialize and train model
         model = LogisticRegression(
             max_iter=config['max_iter'],
             class_weight=config['class_weight'],
             random_state=self.config.random_state
         )
-        
+
         self.logger.info("Fitting final model...")
         model.fit(X_train_vec, y_train)
-        
+
+        # ✅ Store the trained model inside the class
+        self.model = model  
+
         # Save model and vectorizer
         model_path = os.path.join(
             self.config.output_dir,
@@ -235,28 +239,15 @@ class LogisticClassifier(BaseClassifier):
             self.config.output_dir,
             f"tfidf_vectorizer_{self.timestamp}.joblib"
         )
-        
+
         joblib.dump(model, model_path)
         joblib.dump(self.vectorizer, vectorizer_path)
-        
+
         self.logger.info(f"Saved final model to {model_path}")
         self.logger.info(f"Saved vectorizer to {vectorizer_path}")
-        
-        # Save feature importance analysis
-        feature_importance = pd.DataFrame({
-            'feature': self.vectorizer.get_feature_names_out(),
-            'importance': abs(model.coef_[0])
-        })
-        feature_importance = feature_importance.sort_values('importance', ascending=False)
-        
-        importance_path = os.path.join(
-            self.config.output_dir,
-            f"feature_importance_{self.timestamp}.csv"
-        )
-        feature_importance.to_csv(importance_path, index=False)
-        self.logger.info(f"Saved feature importance analysis to {importance_path}")
-        
+
         return model
+
         
     def evaluate_model(self,
                     model: LogisticRegression,
@@ -283,16 +274,20 @@ class LogisticClassifier(BaseClassifier):
         X_test_vec = self.preprocess_data(X_test, is_training=False)
         
         # Get predictions
-        y_pred = model.predict(X_test_vec)
+        y_pred = np.array([1 if label == "suicide" else 0 for label in model.predict(X_test_vec)])
         y_prob = model.predict_proba(X_test_vec)[:, 1]
         
+        # Ensure numeric labels for evaluation
+        y_test = np.array([1 if label == "suicide" else 0 for label in y_test])
+        
+
         # Calculate metrics
         metrics = {
             'accuracy': accuracy_score(y_test, y_pred),
-            'precision': precision_score(y_test, y_pred, pos_label='suicide'),
-            'recall': recall_score(y_test, y_pred, pos_label='suicide'),
-            'f1': f1_score(y_test, y_pred, pos_label='suicide'),
-            'roc_auc': roc_auc_score((y_test == 'suicide').astype(int), y_prob)
+            'precision': precision_score(y_test, y_pred, pos_label=1),
+            'recall': recall_score(y_test, y_pred, pos_label=1),
+            'f1': f1_score(y_test, y_pred, pos_label=1),
+            'roc_auc': roc_auc_score(y_test, y_prob)  # No need for explicit casting
         }
         
         self.logger.info(f"Test set metrics: {metrics}")

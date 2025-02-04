@@ -11,6 +11,8 @@ import argparse
 from transformers import AutoTokenizer
 from torch.utils.data import DataLoader
 import gc  # For garbage collection
+import torch
+
 
 class DataPreprocessor:
     """
@@ -219,11 +221,21 @@ class DataPreprocessor:
         removed_duplicates = initial_rows - len(df)
         self.logger.info(f"Removed {removed_duplicates} duplicate texts")
         
-        # Standardize and optimize class labels by converting to lower case and then to a categorical type.
-        df['class'] = df['class'].str.lower()
-        unique_classes = df['class'].unique()
-        self.logger.info(f"Unique class labels: {unique_classes}")
-        df['class'] = df['class'].astype('category')
+        # Standardize class labels
+        df['class'] = df['class'].astype(str).str.lower().str.strip()
+
+        # Map text labels to numeric values
+        class_mapping = {'suicide': 1, 'non-suicide': 0}
+        df['class'] = df['class'].map(class_mapping)
+
+        # Remove rows with invalid labels
+        df.dropna(subset=['class'], inplace=True)
+
+        # Ensure class column is integer type
+        df['class'] = df['class'].astype(int)
+
+        self.logger.info(f"Updated class labels: {df['class'].unique()}")
+
         
         # Log final statistics after preprocessing.
         final_stats = self.log_dataframe_stats(df, "after_preprocessing")
@@ -285,51 +297,47 @@ class DataPreprocessor:
         return sampled_df
         
     def pre_tokenize_and_save(self, tokenizer, output_path: str, sample_fraction: float = 1.0):
-        """
-        Pre-tokenize the dataset for BERT and save it to disk.
-        
-        Memory usage is reduced by early sampling before tokenization.
-
-        Args:
-            tokenizer: Tokenizer for BERT (e.g., AutoTokenizer).
-            output_path (str): Path to save the pre-tokenized dataset.
-            sample_fraction (float): Fraction of data to sample for tokenization.
-        """
+        """Pre-tokenize the dataset for BERT and save it in PyTorch-compatible format."""
         self.logger.info("Starting pre-tokenization for BERT...")
+
         try:
-            # Load the raw dataset.
             raw_data_file = "Suicide_Detection.csv"
             data = self.load_raw_data(raw_data_file)
-            
-            # Enforce early sampling to reduce memory usage if sample_fraction is less than 1.
+
+            # Sample data for efficiency
             if sample_fraction < 1.0:
-                self.logger.info(f"Early sampling {sample_fraction*100}% of data for tokenization...")
                 data = data.sample(frac=sample_fraction, random_state=42).reset_index(drop=True)
-            
-            # Ensure that the 'text' column exists.
+
             if 'text' not in data.columns:
-                raise ValueError("The dataset must have a 'text' column.")
-            
-            # Pre-tokenize text data using the provided tokenizer.
-            data['tokenized'] = data['text'].apply(
-                lambda x: tokenizer(x, truncation=True, padding=True, max_length=64, return_tensors="pt") #brought it down from 128 to 64 for memory purposes
-            )
-            
-            # (Optional) Convert the tokenized DataFrame to a DataLoader for efficient batch processing.
-            # Note: This is not strictly necessary for saving tokenized data.
-            train_loader = DataLoader(data, batch_size=8, num_workers=0, shuffle=True)
-            
-            # Save the tokenized dataset to disk.
+                raise ValueError("❌ Error: The dataset must have a 'text' column.")
+
+            def tokenize_text(text):
+                encoding = tokenizer(text, truncation=True, padding='max_length', max_length=64, return_tensors="pt")
+                return {
+                    "input_ids": encoding["input_ids"].squeeze(0).tolist(),
+                    "attention_mask": encoding["attention_mask"].squeeze(0).tolist(),
+                    "token_type_ids": encoding.get("token_type_ids", None)  # ✅ Ensure `token_type_ids` is handled properly
+                }
+
+            def validate_tokenized_entry(entry):
+                required_keys = ["input_ids", "attention_mask"]
+                if not isinstance(entry, dict) or not all(key in entry for key in required_keys):
+                    raise ValueError(f"Invalid tokenized format: {entry}")
+
+            # ✅ Apply tokenization and validate each entry **before saving**
+            data["tokenized"] = data["text"].apply(lambda x: tokenize_text(x))
+            data["tokenized"].apply(validate_tokenized_entry)
+
+            # ✅ Save dataset correctly
             data.to_pickle(output_path)
-            self.logger.info(f"Pre-tokenized dataset saved to {output_path}")
-            
-            # Free up memory by deleting data and invoking garbage collection.
-            del data
-            gc.collect()
-            
+            self.logger.info(f"✅ Pre-tokenized dataset saved to {output_path}")
+
         except Exception as e:
-            self.logger.error(f"Error during pre-tokenization: {str(e)}")
+            self.logger.error(f"❌ Error during pre-tokenization: {str(e)}")
             raise
+
+
+
 
     def process_and_save_data(self, input_filename: str, sample_fraction: float = 1.0) -> Tuple[str, Dict]:
         """

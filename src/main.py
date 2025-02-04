@@ -6,12 +6,14 @@ from datetime import datetime
 import json
 import sys
 import torch
+import multiprocessing
 from utils.performance_metrics import PerformanceMetrics
-from base_classes import ModelConfig, BaseClassifier
+from base_classes import ModelConfig
 from classifiers.logistic_classifier import LogisticClassifier
-from classifiers.bert_classifier import BERTClassifier
+from classifiers.bert_classifier import BERTClassifier, TextDataset
 from classifiers.few_shot_classifier import FewShotClassifier
 from utils.visualization import VisualizationManager
+
 
 
 class ClassificationPipeline:
@@ -32,6 +34,14 @@ class ClassificationPipeline:
         self.setup_logging()
         
         self.logger.info("Initialized ClassificationPipeline")
+
+        # Keep a reference to PerformanceMetrics so we can save/plot time usage
+        self.performance_tracker = None
+        
+        # VisualizationManager for plotting
+        self.visual_manager = VisualizationManager(
+            os.path.join(self.config.output_dir, "comparison", "visualizations")
+        )
     
     def setup_directories(self):
         """Create organized directory structure."""
@@ -48,21 +58,17 @@ class ClassificationPipeline:
         """Configure comprehensive logging system."""
         log_file = os.path.join(self.logs_dir, f'pipeline_{self.timestamp}.log')
         
-        # Create formatters
         file_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         console_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
         
-        # File handler with detailed logging
         file_handler = logging.FileHandler(log_file)
         file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(file_formatter)
         
-        # Console handler with info-level logging
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setLevel(logging.INFO)
         console_handler.setFormatter(console_formatter)
         
-        # Setup logger
         self.logger = logging.getLogger(self.__class__.__name__)
         self.logger.setLevel(logging.DEBUG)
         self.logger.addHandler(file_handler)
@@ -72,13 +78,7 @@ class ClassificationPipeline:
 
     def load_data(self, file_path: str) -> pd.DataFrame:
         """
-        Load and preprocess raw data with validation.
-        
-        Args:
-            file_path (str): Path to the raw dataset file.
-            
-        Returns:
-            pd.DataFrame: Loaded and preprocessed DataFrame.
+        Load raw data (CSV) with fallback encodings. Simple validation for 'text' and 'class' columns.
         """
         self.logger.info(f"Loading raw data from {file_path}")
         
@@ -87,7 +87,6 @@ class ClassificationPipeline:
             raise FileNotFoundError(f"Input file not found: {file_path}")
         
         try:
-            # Attempt to load with multiple encodings
             encodings = ['utf-8', 'ISO-8859-1', 'cp1252']
             for encoding in encodings:
                 try:
@@ -99,23 +98,18 @@ class ClassificationPipeline:
             else:
                 raise ValueError("Could not read file with any encoding")
             
-            # Validate required columns
             required_columns = ['text', 'class']
             missing_columns = [col for col in required_columns if col not in df.columns]
             if missing_columns:
                 raise ValueError(f"Missing required columns: {missing_columns}")
             
-            # Log and preprocess
-            self.logger.info(f"Initial data statistics: Total samples: {len(df)}")
+            self.logger.info(f"Initial data statistics: {len(df)} samples")
             df = df.dropna(subset=required_columns)
-            initial_size = len(df)
-            df['text'] = df['text'].apply(BaseClassifier.clean_text)
-            df = df[df['text'].str.strip() != ""]
-            final_size = len(df)
             
-            # Log preprocessing results
-            self.logger.info(f"Removed {initial_size - final_size} empty/invalid samples.")
-            self.logger.info(f"Final sample count: {final_size}")
+            # Minimal cleaning
+            df['text'] = df['text'].str.lower().str.strip()
+            df = df[df['text'] != ""]
+            self.logger.info(f"Final sample count after cleaning: {len(df)}")
             self.logger.info(f"Class distribution:\n{df['class'].value_counts(normalize=True)}")
             
             return df
@@ -124,72 +118,186 @@ class ClassificationPipeline:
             self.logger.error(f"Error loading raw data: {str(e)}")
             raise
 
-    def run_pipeline(self, raw_file: str, tokenized_file: str):
+    def run_pipeline(
+        self, 
+        raw_file: str, 
+        tokenized_file: str, 
+        run_logistic: bool = True, 
+        run_bert: bool = True,
+        run_few_shot: bool = True,
+    ) -> Dict:
         """
-        Run the complete classification pipeline.
+        Run the complete classification pipeline with optional classifier selection.
         
-        Args:
-            raw_file (str): Path to the raw dataset file.
-            tokenized_file (str): Path to the pre-tokenized dataset file.
-            
+        This method loads the raw data (if needed), loads tokenized data (if needed),
+        and runs each classifier’s training pipeline.
+
         Returns:
-            Dict: Summary of the best-performing classifier, or None if no results.
+            dict: Summary of the best-performing classifier or None if no valid results.
         """
         try:
             self.logger.info(f"Starting classification pipeline at {self.timestamp}")
 
-            # Load raw data
-            raw_df = self.load_data(raw_file)
-            raw_texts = raw_df['text'].tolist()
-            raw_labels = raw_df['class'].values
+            # PerformanceMetrics tracker
+            self.performance_tracker = PerformanceMetrics(self.metrics_dir)
 
-            # Load tokenized data for BERTClassifier
-            self.logger.info(f"Loading tokenized data from {tokenized_file}")
-            tokenized_df = pd.read_pickle(tokenized_file)
+            # ---------------------------------------------------------
+            # 1) Conditionally load raw data for Logistic / Few-Shot
+            # ---------------------------------------------------------
+            raw_df = None
+            raw_texts = None
+            raw_labels = None
 
-            # Initialize classifiers
-            classifier_configs = {
-                'logistic': LogisticClassifier,
-                'bert': BERTClassifier,
-                'few_shot': FewShotClassifier
-            }
-            performance_tracker = PerformanceMetrics(self.metrics_dir)
+            if run_logistic or run_few_shot:
+                self.logger.info(f"Loading raw data from {raw_file}")
+                raw_df = self.load_data(raw_file)
+                raw_texts = raw_df['text'].tolist()
+                raw_labels = raw_df['class'].values
+
+            # ---------------------------------------------------------
+            # 2) Conditionally load tokenized data for BERT
+            # ---------------------------------------------------------
+            tokenized_df = None
+            if run_bert:
+                self.logger.info(f"Loading tokenized data from {tokenized_file}")
+                tokenized_df = pd.read_pickle(tokenized_file)  # ✅ Load the tokenized data first
+                dataset = TextDataset(tokenized_df)  # ✅ Pass the DataFrame, not file_path
+
+
+            # ---------------------------------------------------------
+            # 3) Build dictionary of classifiers to run
+            # ---------------------------------------------------------
+            classifier_configs = [
+                ("logistic", LogisticClassifier) if run_logistic else None,
+                ("bert", BERTClassifier) if run_bert else None,
+                ("few_shot", FewShotClassifier) if run_few_shot else None
+            ]
+
+            # Remove None values (for cases where a classifier is disabled)
+            classifier_configs = [entry for entry in classifier_configs if entry is not None]
 
             results = {}
-            for name, classifier_class in classifier_configs.items():
-                try:
-                    self.logger.info(f"Running {name} classifier...")
+
+            # ---------------------------------------------------------
+            # 4) For each classifier:
+            #    - do cross-validation
+            #    - final train
+            #    - final test eval
+            #    - get test metrics + (y_test, y_prob) for ROC
+            # ---------------------------------------------------------
+            for name, classifier_class in classifier_configs:
+                self.logger.info(f"Running {name} classifier...")
+
+                # ✅ Pass dataset only to BERT
+                if name == "bert":
+                    classifier = classifier_class(self.config, dataset=dataset)
+                else:
                     classifier = classifier_class(self.config)
 
-                    if name == "bert":
-                        # Tokenized data for BERT
-                        iteration_metrics, mean_metrics, std_metrics = performance_tracker.track_performance(
-                            name, classifier.train, tokenized_df['tokenized'], tokenized_df['class']
+                try:
+                    output = self.performance_tracker.track_performance(
+                        classifier_name=name,
+                        func=classifier.train,
+                        texts=(
+                            dataset.data['tokenized'] if name == "bert" 
+                            else raw_texts
+                        ),
+                        labels=(
+                            dataset.data['class'] if name == "bert"
+                            else raw_labels
                         )
-                    else:
-                        # Raw data for Logistic and Few-Shot
-                        iteration_metrics, mean_metrics, std_metrics = performance_tracker.track_performance(
-                            name, classifier.train, raw_texts, raw_labels
-                        )
+                    )
 
-                    results[name] = (iteration_metrics, mean_metrics, std_metrics)
+                    (cv_metrics, final_metrics, best_config, 
+                    final_labels, final_probs) = output
+
+                    results[name] = (cv_metrics, final_metrics, best_config)
+
+                    if final_labels is not None and final_probs is not None:
+                        self.visual_manager.plot_roc_curves(
+                            y_true=final_labels,
+                            y_prob=final_probs,
+                            model_name=name,
+                            fold=None
+                        )
 
                 except Exception as e:
                     self.logger.error(f"Error in {name} classifier: {str(e)}")
-                    continue
+                    continue  # Skip to next classifier if error
 
-            # Save and visualize results
+            # ---------------------------------------------------------
+            # 5) If we got results, save a comparison summary
+            # ---------------------------------------------------------
             if results:
                 summary = self.save_comparison_results(results)
                 self.logger.info("Pipeline completed successfully.")
-                return summary
             else:
                 self.logger.warning("No valid results to compare.")
-                return None
+                summary = None
+
+            # ---------------------------------------------------------
+            # 6) Free memory if needed
+            # ---------------------------------------------------------
+            del raw_df, tokenized_df
+            import gc
+            gc.collect()
+
+            return summary
 
         except Exception as e:
             self.logger.error(f"Pipeline failed: {str(e)}")
             raise
+    
+    def save_comparison_results(self, results: dict) -> dict:
+        """
+        Example method to compare final results from each classifier.
+        
+        'results' is a dict like:
+            {
+              "logistic": ([cv_metrics], final_metrics, best_config),
+              "few_shot":  ...,
+              "bert": ...
+            }
+        """
+        self.logger.info("Saving comparison results...")
+        
+        best_model = None
+        best_f1_score = 0.0
+        
+        # 'results[name]' -> (cv_metrics_list, final_test_metrics_dict, best_config_dict)
+        for model_name, (fold_metrics, final_metrics, best_config) in results.items():
+            # final_metrics is a dictionary with e.g. {'accuracy':..., 'f1':..., ...}
+            if final_metrics["f1"] > best_f1_score:
+                best_f1_score = final_metrics["f1"]
+                best_model = model_name
+        
+        summary = {
+            "best_model": best_model,
+            "best_f1_score": best_f1_score
+        }
+        
+        # Save summary as JSON
+        out_file = os.path.join(self.metrics_dir, f"comparison_summary_{self.timestamp}.json")
+        with open(out_file, "w") as f:
+            json.dump(summary, f, indent=4)
+        
+        self.logger.info(f"Comparison summary saved to {out_file}")
+        
+        # A) Save & plot performance metrics (time, GPU) from PerformanceTracker
+        df_metrics = self.performance_tracker.save_results()
+        self.performance_tracker.plot_results(df_metrics)
+        
+        # B) Optionally, we can also do bar plots for each fold metric
+        for model_name, (fold_metrics, final_m, config_m) in results.items():
+            self.visual_manager.plot_metrics_across_iterations(
+                metrics_list=fold_metrics,    
+                mean_metrics=final_m,
+                std_metrics={},   # if you want std, store it in final_m or another dict
+                model_name=model_name
+            )
+        
+        return summary
+
 
 def main():
     """Main function to run the pipeline."""
@@ -215,5 +323,8 @@ def main():
         print(f"Error: {str(e)}")
         sys.exit(1)
 
+import multiprocessing
+
 if __name__ == "__main__":
-    main()
+   main()
+

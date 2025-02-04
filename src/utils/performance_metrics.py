@@ -5,6 +5,7 @@ import os
 import matplotlib.pyplot as plt
 from scipy import stats
 from typing import List
+import json
 
 
 
@@ -78,16 +79,26 @@ class PerformanceMetrics:
     
     def save_results(self) -> pd.DataFrame:
         """
-        Save performance metrics to a CSV file.
+        Save performance metrics to both CSV and JSON.
 
         Returns:
             pd.DataFrame: DataFrame containing the recorded metrics.
         """
         df = pd.DataFrame(self.results)
-        table_path = os.path.join(self.output_dir, "performance_metrics.csv")
-        df.to_csv(table_path, index=False)
-        print(f"Performance metrics saved to {table_path}")
+        csv_path = os.path.join(self.output_dir, f"performance_metrics_{self.timestamp}.csv")
+        json_path = os.path.join(self.output_dir, f"performance_metrics_{self.timestamp}.json")
+
+        # Save CSV
+        df.to_csv(csv_path, index=False)
+        print(f"Performance metrics saved to {csv_path}")
+
+        # Save JSON
+        with open(json_path, "w") as f:
+            json.dump(self.results, f, indent=4)
+        print(f"Performance metrics saved to {json_path}")
+
         return df
+
 
     def plot_results(self, df: pd.DataFrame):
         """

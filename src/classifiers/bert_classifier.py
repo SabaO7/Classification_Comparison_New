@@ -1,276 +1,334 @@
+from logging import Logger
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, Trainer, TrainingArguments
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, Subset
 import numpy as np
 from typing import Dict, List, Tuple, Any
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 import os
 from base_classes import BaseClassifier, ModelConfig
-import shutil 
+import shutil
 import json
 import pandas as pd
-from torch.utils.data import DataLoader #adding this based on the comment from Helen to handle dynamic batch loading!! which hopefully reduces the load
+import gc
+from transformers import DataCollatorWithPadding
+from sklearn.model_selection import StratifiedKFold  
+from scipy.special import softmax
 
 
 # Disable tokenizer parallelism to avoid deadlock warnings
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-class TextDataset(Dataset): #updated this to use the tokenized data
-    """Dataset class for BERT model with tokenized data"""
+# ----------------------------------------------------------------
+# 1) Check existing folds that have completed
+# ----------------------------------------------------------------
+metrics_dir = "outputs/bert/logs"
+completed_folds = []
 
-    def __init__(self, file_path: str):
+for fold_idx in range(5):
+    metrics_file = os.path.join(metrics_dir, f"metrics_fold_{fold_idx}.json")
+    if os.path.exists(metrics_file):
+        completed_folds.append(fold_idx)
+
+print("Completed folds:", completed_folds)
+
+# ----------------------------------------------------------------
+# 2) Single load of the data BEFORE the folds
+# ----------------------------------------------------------------
+print("Loading tokenized DataFrame once...")
+full_dataset = pd.read_pickle("../data/tokenized/tokenized_data.pkl")
+print(f"Loaded dataset with {len(full_dataset)} rows.")
+
+
+class TextDataset(Dataset):
+    """
+    Dataset class for BERT model with tokenized data.
+    
+    We accept an existing DataFrame to avoid re-reading
+    from disk for each fold. The DataFrame must have:
+      - "tokenized": a dict of {input_ids, attention_mask, ...}
+      - "class": either 'suicide' or 'non-suicide'
+    """
+    def __init__(self, dataframe: pd.DataFrame):
         """
-        Load pre-tokenized dataset from disk.
-        
-        Args:
-            file_path (str): Path to the pre-tokenized dataset.
+        Initialize dataset from a pre-loaded DataFrame.
         """
-        self.data = pd.read_pickle(file_path)
+        self.data = dataframe.copy()
+
+        # ✅ Ensure tokenized column exists and is not empty
+        if "tokenized" not in self.data.columns:
+            raise ValueError("Dataset is missing 'tokenized' column.")
+
+        # ✅ Drop rows with missing tokenized data
+        self.data = self.data.dropna(subset=["tokenized"]).reset_index(drop=True)
+
+        print(f"✅ Loaded dataset with {len(self.data)} valid rows.")
 
     def __getitem__(self, idx: int) -> Dict:
         """Retrieve pre-tokenized item by index."""
         record = self.data.iloc[idx]
-        try:
-            # Convert string labels to integers
-            label = 1 if record['class'] == 'suicide' else 0
-            
-            # Convert tokenized data to tensors
-            item = {key: torch.tensor(val) for key, val in record['tokenized'].items()}
-            item['labels'] = torch.tensor(label, dtype=torch.long)
 
-            # Debugging: Print types and contents
-            print(f"Item {idx}:")
-            print(f"Input IDs Type: {type(item['input_ids'])}, Shape: {item['input_ids'].shape}")
-            print(f"Attention Mask Type: {type(item['attention_mask'])}, Shape: {item['attention_mask'].shape}")
-            print(f"Label Type: {type(item['labels'])}, Value: {item['labels']}")
+        try:
+            # ✅ Ensure the tokenized data is valid
+            if not isinstance(record["tokenized"], dict):
+                raise ValueError(f"Invalid tokenized format at index {idx}: {record['tokenized']}")
+
+            label = 1 if record["class"] == "suicide" else 0
+            item = {key: torch.tensor(val) for key, val in record["tokenized"].items()}
+            item["labels"] = torch.tensor(label, dtype=torch.long)
 
             return item
         except Exception as e:
-            print(f"Error processing record {idx}: {e}")
+            print(f"❌ Error processing record {idx}: {e}")
             raise
 
-
-
-
-    def __len__(self) -> int:
-        """Get dataset length."""
+    def __len__(self):
         return len(self.data)
+
 
 class BERTClassifier(BaseClassifier):
     """
-    BERT-based classifier implementation with cross-validation
-    
-    Uses tiny-BERT model for efficient training while maintaining performance
-    Implements proper CV strategy with holdout test set
+    BERT-based classifier implementation with cross-validation.
     """
-    
-    def __init__(self, config: ModelConfig):
-        """
-        Initialize BERT classifier
-        
-        Args:
-            config (ModelConfig): Configuration object
-        """
+
+    def __init__(self, config: ModelConfig, dataset: TextDataset):
         super().__init__(config)
         self.logger.info("Initializing BERT classifier...")
-        
-        # Setup device
+
+        # ✅ Store the dataset once to avoid reloading
+        self.dataset = dataset
+
+        # ✅ Setup device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.logger.info(f"Using device: {self.device}")
-        
-        # Initialize tokenizer
+
+        # ✅ Initialize tokenizer
         self.logger.info("Loading BERT tokenizer...")
-        self.tokenizer = AutoTokenizer.from_pretrained('prajjwal1/bert-tiny')
-        
+        self.tokenizer = AutoTokenizer.from_pretrained("prajjwal1/bert-tiny")
+
+        # ✅ DataCollator handles dynamic padding
+        self.data_collator = DataCollatorWithPadding(tokenizer=self.tokenizer)
         self.model = None
 
-    def compute_metrics(self, pred) -> Dict:
+    def train(self, texts: List[str], labels: np.ndarray) -> Tuple[List[Dict], Dict, Dict, Any, Any]:
         """
-        Compute comprehensive evaluation metrics
+        Override the generic train method.
         
-        Args:
-            pred: Prediction outputs
-            
+        For the BERTClassifier we already have a custom training routine that
+        loads the tokenized data once and uses index-based cross-validation.
+        This override ensures that when the pipeline calls train(), it uses the
+        BERT-specific training routine rather than the generic one (which expects
+        raw texts and labels).
+        
         Returns:
-            Dict: Dictionary of computed metrics
+            Tuple containing:
+            - A list of cross-validation metrics (dummy placeholder here),
+            - A dictionary of final test metrics (dummy placeholder),
+            - A dictionary representing the best configuration (dummy placeholder),
+            - Final test labels (dummy placeholder),
+            - Final test probabilities (dummy placeholder).
         """
-        labels = pred.label_ids
-        preds = np.argmax(pred.predictions, axis=1)
-        probs = pred.predictions[:, 1]  # Probability of positive class
+        # Call the BERT-specific training routine.
+        self.train_model()
         
-        metrics = {
-            'accuracy': accuracy_score(labels, preds),
-            'precision': precision_score(labels, preds),
-            'recall': recall_score(labels, preds),
-            'f1': f1_score(labels, preds),
-            'roc_auc': roc_auc_score(labels, probs)
-        }
+        # In your current BERT code, you are not returning CV metrics or final evaluation results.
+        # You can either extend your train_model() and train_final_model() methods to compute these
+        # or, if you do not need them, return placeholder values.
+        cv_metrics = []      # Replace with actual CV metrics if available.
+        best_config = {}     # Replace with the best configuration if computed.
+        test_metrics = {}    # Replace with final test metrics if final evaluation is performed.
+        final_labels = None  # Replace with the final test labels if computed.
+        final_probs = None   # Replace with the final test probabilities if computed.
         
-        self.logger.debug(f"Computed metrics: {metrics}")
-        return metrics
+        return cv_metrics, test_metrics, best_config, final_labels, final_probs
 
-    #updated this part as well to use the DataLoader for dynamic batch loading - also cleaned the memory after each fold 
-    def train_fold(self, fold: int) -> Tuple[Any, Dict, Dict]:
+
+    def train_model(self):
         """
-        Train model on a single fold using dynamic data loading with DataLoader.
-        
-        Args:
-            fold (int): Fold number
-            
+        Runs cross-validation for training the BERT model.
+
+        This method:
+        - Loads the dataset ONCE
+        - Uses StratifiedKFold to create train/val splits
+        - Calls `train_fold()` with index-based subsets (instead of reloading the dataset)
+        """
+        self.logger.info("Starting cross-validation...")
+
+        # Use the dataset that was passed from main.py
+        dataset = self.dataset  # ✅ Correct: Use preloaded dataset
+
+
+        # ✅ Stratified K-Fold split (preserves class balance)
+        skf = StratifiedKFold(n_splits=self.config.num_iterations, shuffle=True, random_state=self.config.random_state)
+
+        # ✅ Convert labels to numpy array
+        labels = np.array(full_dataset["class"].map({"suicide": 1, "non-suicide": 0}))
+
+        cv_metrics = []
+        cv_configs = []
+
+        # ✅ Loop through each fold
+        for fold, (train_idx, val_idx) in enumerate(skf.split(full_dataset["text"], labels)):
+            self.logger.info(f"\nTraining fold {fold + 1}/{self.config.num_iterations}")
+
+            # ✅ Call train_fold with index-based subsets
+            model, fold_metrics, fold_config = self.train_fold(
+                dataset, train_idx, val_idx, fold
+            )
+
+            # ✅ Store fold results
+            cv_metrics.append(fold_metrics)
+            cv_configs.append(fold_config)
+
+        self.logger.info("✅ Cross-validation complete. Saving results.")
+
+    def train_fold(self, dataset, train_idx, val_idx, fold: int) -> Tuple[Any, Dict, Dict]:
+        """
+        Train model on a single fold using the provided train/val sets.
+
         Returns:
-            Tuple[Any, Dict, Dict]: 
-                - Trained model
-                - Evaluation metrics
-                - Training arguments
+            (model, metrics, training_args)
         """
-        self.logger.info(f"Training fold {fold + 1}")  # Log the fold number
-        self.logger.info(f"Using pre-tokenized data for training and validation.")
+        self.logger.info(f"Training fold {fold + 1}")
+        self.logger.info("Using distinct train/val subsets for real cross-validation.")
 
         try:
-            # Initialize train and validation datasets from pre-tokenized file
-            train_dataset = TextDataset(file_path="../../data/tokenized/tokenized_data.pkl")
-            print(train_dataset[0])
-            val_dataset = TextDataset(file_path="../../data/tokenized/tokenized_data.pkl")
+            # ✅ Subset dataset using provided indices
+            train_subset = Subset(dataset, train_idx)
+            val_subset = Subset(dataset, val_idx)
 
-            # Use DataLoader for dynamic data loading in batches
-            train_loader = DataLoader(
-                train_dataset, batch_size=32, shuffle=True, num_workers=4
-            )
-            val_loader = DataLoader(
-                val_dataset, batch_size=32, shuffle=False, num_workers=4
-            )
-
-### STILL GETTING THIS ERROR Error in bert classifier: np.int64(7), something is wrong with the new method
-            # Debugging: Inspect the first batch from train_loader
-            for batch in train_loader:
-                print("Inspecting first batch:")
-                print(f"Batch Input IDs: {batch['input_ids'].shape}, Type: {batch['input_ids'].dtype}")
-                print(f"Batch Attention Mask: {batch['attention_mask'].shape}, Type: {batch['attention_mask'].dtype}")
-                print(f"Batch Labels: {batch['labels'].shape}, Type: {batch['labels'].dtype}")
-                print(f"First Label in Batch: {batch['labels'][0]}")
-                break  # Only inspect the first batch
-
-            # Load the BERT model for sequence classification
+            # -------------------------------------------------
+            # ✅ Load Pretrained BERT Model for Classification
+            # -------------------------------------------------
             model = AutoModelForSequenceClassification.from_pretrained(
-                'prajjwal1/bert-tiny', num_labels=2
-            ).to(self.device)  # Move model to the appropriate device (CPU/GPU)
+                "prajjwal1/bert-tiny",
+                num_labels=2  # Ensure model initializes classification head properly
+            ).to(self.device)
 
-            # Define output directory for fold-specific training artifacts
+            # -------------------------------------------------
+            # ✅ Define Training Output Directory
+            # -------------------------------------------------
             output_dir = os.path.join(self.models_dir, f"fold_{fold}_{self.timestamp}")
-            os.makedirs(output_dir, exist_ok=True)  # Ensure the directory exists
+            os.makedirs(output_dir, exist_ok=True)
 
-            # Define training arguments for the Trainer API
+            # -------------------------------------------------
+            # ✅ Define TrainingArguments for Hugging Face Trainer
+            # -------------------------------------------------
             training_args = TrainingArguments(
-                output_dir=output_dir,  # Directory to save model checkpoints and outputs
-                learning_rate=3e-5,  # Fixed learning rate for fine-tuning
-                per_device_train_batch_size=32,  # Batch size managed by DataLoader
-                per_device_eval_batch_size=32,  # Batch size managed by DataLoader
+                output_dir=output_dir,        # Save model checkpoints here
+                learning_rate=3e-5,           # Learning rate for optimizer
+                per_device_train_batch_size=16,  # Training batch size
+                per_device_eval_batch_size=16,   # Evaluation batch size
                 num_train_epochs=self.config.epochs,  # Number of training epochs
-                weight_decay=0.01,  # Regularization to avoid overfitting
-                evaluation_strategy="steps",  # Evaluate after a specific number of steps
-                eval_steps=500,  # Evaluate every 500 steps
-                save_strategy="steps",  # Save checkpoints frequently
-                save_steps=500,  # Save checkpoints every 500 steps
-                save_total_limit=1,  # Keep only the most recent checkpoint
-                load_best_model_at_end=False,  # Disable best model loading to save memory
-                metric_for_best_model="f1",  # Use F1 score to evaluate the best model
+                weight_decay=0.01,             # Regularization to prevent overfitting
+                evaluation_strategy="epoch",   # Evaluate at the end of each epoch
+                save_strategy="no",            # No intermediate model saving
                 logging_dir=f"{self.config.output_dir}/logs",  # Logging directory
-                logging_steps=1000,  # Log every 1000 steps
-                gradient_accumulation_steps=4,  # Accumulate gradients to simulate larger batches
-                fp16=False,  # Disable mixed precision for compatibility
-                max_grad_norm=1.0,  # Clip gradients to avoid explosion
+                logging_steps=1000,            # Log every 1000 steps
+                gradient_accumulation_steps=2, # Accumulate gradients to avoid out-of-memory issues
+                fp16=False,                    # Disable mixed precision for stability
+                max_grad_norm=1.0,              # Gradient clipping
             )
 
-            # Define Trainer object for managing training and evaluation
+            # -------------------------------------------------
+            # ✅ Initialize Trainer
+            # -------------------------------------------------
             trainer = Trainer(
-                model=model,  # Model instance
-                args=training_args,  # Training arguments
-                train_dataset=train_loader,  # Pass DataLoader for training
-                eval_dataset=val_loader,  # Pass DataLoader for validation
-                compute_metrics=self.compute_metrics  # Custom metrics computation
+                model=model,         # Model instance
+                args=training_args,  # Training configuration
+                train_dataset=train_subset,  # ✅ Use defined subset
+                eval_dataset=val_subset,    # ✅ Use defined subset
+                data_collator=self.data_collator, # Handles batch padding dynamically
+                compute_metrics=self.compute_metrics # Function to compute performance metrics
             )
 
-            # Train the model and evaluate
-            trainer.train()
-            metrics = trainer.evaluate()  # Evaluate the model after training
-            cleaned_metrics = {k.replace('eval_', ''): v for k, v in metrics.items()}  # Clean metric names
 
-            # Save fold metrics to JSON
+            # -------------------------------------------------
+            # ✅ Train and Evaluate Model
+            # -------------------------------------------------
+            trainer.train()  # Train model
+            eval_metrics = trainer.evaluate()  # Evaluate on validation set
+
+            # ✅ Process evaluation metrics
+            # ✅ Convert NumPy arrays to lists before saving JSON
+            cleaned_metrics = {k.replace("eval_", ""): float(v) for k, v in eval_metrics.items()}
+            for key, value in cleaned_metrics.items():
+                if isinstance(value, np.ndarray):
+                    cleaned_metrics[key] = value.tolist()  # ✅ Convert to list before saving
+
+            # ✅ Save fold metrics to JSON file
             metrics_file = os.path.join(self.logs_dir, f"metrics_fold_{fold}.json")
-            with open(metrics_file, 'w') as f:
+            with open(metrics_file, "w") as f:
                 json.dump(cleaned_metrics, f, indent=4)
+
             self.logger.info(f"Metrics for fold {fold + 1} saved to {metrics_file}")
 
+            # -------------------------------------------------
+            # ✅ Return trained model, metrics, and arguments
+            # -------------------------------------------------
+            return model, cleaned_metrics, training_args.to_dict()
+
         except Exception as e:
-            # Log errors during training
-            self.logger.error(f"Error in fold training: {str(e)}")
+            # ❌ Log any errors that occur during training
+            self.logger.error(f"Error in fold {fold} training: {str(e)}")
             raise
 
         finally:
-            # Free up GPU memory by explicitly deleting unused objects
-            del model, trainer, train_loader, val_loader
+            # -------------------------------------------------
+            # ✅ Cleanup: Free GPU Memory After Each Fold
+            # -------------------------------------------------
+            del model, trainer  # Delete model and trainer instance
             if torch.cuda.is_available():
-                torch.cuda.empty_cache()  # Clear the CUDA cache
-                torch.cuda.synchronize()  # Synchronize CUDA operations to ensure all memory is cleared
-            self.logger.info("Cleared GPU memory after fold.")
-
-            # Clean up fold-specific output directory if training failed
-            if os.path.exists(output_dir) and len(os.listdir(output_dir)) == 0:
-                shutil.rmtree(output_dir)
-
-        # Return the trained model, metrics, and training arguments
-        return None, cleaned_metrics, training_args.to_dict()
+                torch.cuda.empty_cache()  # Free GPU memory
+            gc.collect()  # Run garbage collection to free CPU memory
+            self.logger.info("✅ Cleared GPU memory after fold.")
 
 
-            
-        
-        
+    def save_model(self, model, prefix="final_model"):
+        """Save the trained model"""
+        model_dir = os.path.join(self.models_dir, f"{prefix}_{self.timestamp}")
+        os.makedirs(model_dir, exist_ok=True)
+        model.save_pretrained(model_dir)
+        self.logger.info(f"Model saved to {model_dir}")
+
 
     def save_model(self, model, prefix="final_model"):
         """
         Save the trained model
-        
-        Args:
-            model: Trained model
-            prefix (str): Prefix for the model file name
         """
         model_dir = os.path.join(self.models_dir, f"{prefix}_{self.timestamp}")
         os.makedirs(model_dir, exist_ok=True)
         model.save_pretrained(model_dir)
         self.logger.info(f"Model saved to {model_dir}")
         
-        
-    def train_final_model(self, 
-                         X_train: List[str],
-                         y_train: np.ndarray,
-                         config: Dict) -> Any:
+    def train_final_model(
+        self, 
+        X_train: List[str],
+        y_train: np.ndarray,
+        config: Dict
+    ) -> Any:
         """
-        Train final model on entire training set
-        
-        Args:
-            X_train: Full training texts
-            y_train: Full training labels
-            config: Best configuration from CV
-            
-        Returns:
-            Any: Trained final model
+        Train final model on entire training set (optional).
+        If your data is already fully tokenized in full_df, we can just reuse that.
         """
-        self.logger.info("Training final model on complete training set...")
+        self.logger.info("Training final model on complete training set.")
         self.logger.info(f"Training set size: {len(X_train)}")
-        self.logger.info(f"Using configuration: {config}")
-        
+        self.logger.info(f"Using config: {config}")
+
         try:
-            train_dataset = TextDataset(file_path= "../../data/tokenized/tokenized_data.pkl")
+            # Just reuse the single loaded DataFrame if you want all data
+            final_dataset = TextDataset(full_df)
+
             model = AutoModelForSequenceClassification.from_pretrained(
-                'prajjwal1/bert-tiny', num_labels=2
+                "prajjwal1/bert-tiny", num_labels=2
             ).to(self.device)
 
             training_args = TrainingArguments(
                 output_dir=f"{self.config.output_dir}/bert_final_{self.timestamp}",
-                learning_rate=config['learning_rate'],
-                per_device_train_batch_size=config['batch_size'],
-                num_train_epochs=config['epochs'],
-                weight_decay=config['weight_decay'],
+                learning_rate=config["learning_rate"],
+                per_device_train_batch_size=config["per_device_train_batch_size"],
+                num_train_epochs=config["num_train_epochs"],
+                weight_decay=config["weight_decay"],
                 save_strategy="epoch",
                 logging_dir=f"{self.config.output_dir}/logs_final_{self.timestamp}",
                 logging_steps=10
@@ -279,7 +337,8 @@ class BERTClassifier(BaseClassifier):
             trainer = Trainer(
                 model=model,
                 args=training_args,
-                train_dataset=train_dataset
+                train_dataset=final_dataset,
+                data_collator=self.data_collator
             )
 
             trainer.train()
@@ -289,95 +348,101 @@ class BERTClassifier(BaseClassifier):
             raise
 
         finally:
-            del model, trainer, train_dataset
+            del model, trainer, final_dataset
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-        return model
+        return None  # or return model if you prefer
     
-    #updated this part as well to use dynamic batch loading
-    def evaluate_model(self, 
-                   model: AutoModelForSequenceClassification,
-                   file_path: str) -> Dict:
+    def evaluate_model(
+        self, 
+        model: AutoModelForSequenceClassification,
+        X_test: List[Any],
+        y_test: Any,
+        file_path: str = None
+    ) -> Tuple[Dict, np.ndarray, np.ndarray]:
         """
-        Evaluate model on test set using dynamic data loading.
+        Evaluate model on a test set.
         
-        Args:
-            model: Trained model
-            file_path: Path to pre-tokenized dataset.
-            
         Returns:
-            Dict: Evaluation metrics
+            Tuple[Dict, np.ndarray, np.ndarray]: 
+                - A dictionary of evaluation metrics.
+                - An array of ground-truth labels.
+                - An array of probabilities for the positive class.
         """
         self.logger.info("Evaluating model on test set...")
 
-        try:
-            # Initialize test dataset and DataLoader
-            test_dataset = TextDataset(file_path=file_path)
-            test_loader = DataLoader(
-                test_dataset, batch_size=32, shuffle=False, num_workers=4
-            )
+        if file_path is None:
+            file_path = "../data/tokenized/tokenized_data.pkl"
 
-            # Define Trainer for evaluation
+        try:
+            test_df = pd.read_pickle(file_path)
+            test_dataset = TextDataset(test_df)
+
             trainer = Trainer(
                 model=model,
+                data_collator=self.data_collator,
                 compute_metrics=self.compute_metrics
             )
 
-            # Evaluate
-            metrics = trainer.evaluate(eval_dataset=test_loader)
-            cleaned_metrics = {k.replace('eval_', ''): v for k, v in metrics.items()}
+            predictions = trainer.predict(test_dataset)
+            logits = predictions.predictions    # shape (N, 2)
+            label_ids = predictions.label_ids   # ground-truth labels as 0/1
 
-            self.logger.info(f"Evaluation metrics: {cleaned_metrics}")
-            return cleaned_metrics
+            # Convert logits -> probabilities for the positive class (index=1)
+            probs = softmax(logits, axis=1)[:, 1]
+
+            metrics = self.compute_metrics(predictions)
+            cleaned = {k: float(v) for k, v in metrics.items()}
+            self.logger.info(f"Evaluation metrics: {cleaned}")
+
+            # Save predictions to CSV
+            pred_labels = np.argmax(logits, axis=1)
+            df_out = pd.DataFrame({
+                'prediction': pred_labels,
+                'actual': label_ids,
+                'probability': probs
+            })
+            df_out.to_csv(
+                f"{self.config.output_dir}/bert_test_predictions_{self.timestamp}.csv",
+                index=False
+            )
+            return cleaned, label_ids, probs
 
         except Exception as e:
             self.logger.error(f"Error during evaluation: {str(e)}")
             raise
 
-        
-    def predict(self, texts: List[str]) -> np.ndarray:
+    def compute_metrics(self, eval_pred: Tuple[np.ndarray, np.ndarray]) -> Dict:
         """
-        Make predictions on new texts
+        Compute evaluation metrics from the model predictions.
         
         Args:
-            texts (List[str]): List of text samples
-            
+            eval_pred (Tuple[np.ndarray, np.ndarray]): A tuple containing:
+                - logits: Model output logits.
+                - labels: Ground truth labels.
+                
         Returns:
-            np.ndarray: Predicted labels
+            Dict: A dictionary with evaluation metrics.
         """
-        if self.model is None:
-            raise ValueError("Model hasn't been trained yet")
-            
-        # Create dataset
-        dataset = TextDataset(texts, np.zeros(len(texts)), self.tokenizer)
+        logits, labels = eval_pred
+        predictions = np.argmax(logits, axis=-1)
         
-        # Initialize trainer
-        trainer = Trainer(model=self.model)
+        # Compute metrics using sklearn
+        accuracy = accuracy_score(labels, predictions)
+        precision = precision_score(labels, predictions, pos_label=1)
+        recall = recall_score(labels, predictions, pos_label=1)
+        f1 = f1_score(labels, predictions, pos_label=1)
+        # Compute ROC AUC (ensure labels are binary integers 0 and 1)
+        # Use softmax to convert logits to probabilities for the positive class
+        probs = softmax(logits, axis=1)[:, 1]
+        roc_auc = roc_auc_score(labels, probs)
         
-        # Get predictions
-        predictions = trainer.predict(dataset)
-        return np.argmax(predictions.predictions, axis=1)
-        
-    def predict_proba(self, texts: List[str]) -> np.ndarray:
-        """
-        Get prediction probabilities for new texts
-        
-        Args:
-            texts (List[str]): List of text samples
-            
-        Returns:
-            np.ndarray: Predicted probabilities for positive class
-        """
-        if self.model is None:
-            raise ValueError("Model hasn't been trained yet")
-            
-        # Create dataset
-        dataset = TextDataset(texts, np.zeros(len(texts)), self.tokenizer)
-        
-        # Initialize trainer
-        trainer = Trainer(model=self.model)
-        
-        # Get predictions
-        predictions = trainer.predict(dataset)
-        return predictions.predictions[:, 1]  # Return probability of positive class
+        return {
+            "accuracy": accuracy,
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "roc_auc": roc_auc
+        }
+

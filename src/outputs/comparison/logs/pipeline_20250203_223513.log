@@ -1,0 +1,19 @@
+2025-02-03 22:35:13,669 - ClassificationPipeline - INFO - Logging setup complete. Log file: outputs/comparison/logs/pipeline_20250203_223513.log
+2025-02-03 22:35:13,669 - ClassificationPipeline - INFO - Initialized ClassificationPipeline
+2025-02-03 22:35:13,670 - ClassificationPipeline - INFO - Starting classification pipeline at 20250203_223513
+2025-02-03 22:35:13,670 - ClassificationPipeline - INFO - Loading raw data from ../data/raw/Suicide_Detection.csv
+2025-02-03 22:35:13,670 - ClassificationPipeline - INFO - Loading raw data from ../data/raw/Suicide_Detection.csv
+2025-02-03 22:35:13,670 - ClassificationPipeline - DEBUG - Attempting to read with utf-8 encoding
+2025-02-03 22:35:16,424 - ClassificationPipeline - INFO - Initial data statistics: 232074 samples
+2025-02-03 22:35:17,672 - ClassificationPipeline - INFO - Final sample count after cleaning: 232074
+2025-02-03 22:35:17,686 - ClassificationPipeline - INFO - Class distribution:
+class
+suicide        0.5
+non-suicide    0.5
+Name: proportion, dtype: float64
+2025-02-03 22:35:17,696 - ClassificationPipeline - INFO - Loading tokenized data from ../data/tokenized/tokenized_data.pkl
+2025-02-03 22:35:53,707 - ClassificationPipeline - INFO - Running logistic classifier...
+2025-02-03 22:37:12,364 - ClassificationPipeline - ERROR - Error in logistic classifier: name 'final_labels' is not defined
+2025-02-03 22:37:12,445 - ClassificationPipeline - INFO - Running bert classifier...
+2025-02-03 22:37:13,761 - ClassificationPipeline - ERROR - Error in bert classifier: cannot access local variable 'trainer' where it is not associated with a value
+2025-02-03 22:37:13,761 - ClassificationPipeline - INFO - Running few_shot classifier...

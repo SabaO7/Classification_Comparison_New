@@ -1,9 +1,0 @@
-2025-01-16 18:03:38,760 - data_preprocessing - INFO - Logging setup complete. Log file: ../../data/tokenized/preprocessing_20250116_180338.log
-2025-01-16 18:03:38,760 - data_preprocessing - INFO - Initialized DataPreprocessor
-2025-01-16 18:03:38,761 - data_preprocessing - INFO - Raw data path: ../../data/raw
-2025-01-16 18:03:38,761 - data_preprocessing - INFO - Processed data path: ../../data/tokenized
-2025-01-16 18:03:38,761 - data_preprocessing - INFO - Starting pre-tokenization for BERT...
-2025-01-16 18:03:38,761 - data_preprocessing - INFO - Attempting to load file: ../../data/raw/Suicide_Detection.csv
-2025-01-16 18:03:38,761 - data_preprocessing - DEBUG - Trying encoding: utf-8
-2025-01-16 18:03:40,139 - data_preprocessing - INFO - Successfully loaded data with utf-8 encoding
-2025-01-16 18:05:58,592 - data_preprocessing - INFO - Pre-tokenized dataset saved to ../../data/tokenized/tokenized_data.pkl

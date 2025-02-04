@@ -1,0 +1,2 @@
+2025-02-03 22:35:13,669 - utils.visualization - INFO - Logging setup complete
+2025-02-03 22:35:13,670 - utils.visualization - INFO - Initialized VisualizationManager with output dir: outputs/comparison/visualizations

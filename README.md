@@ -128,68 +128,150 @@ A few-shot learning implementation for low-resource text classification tasks.
 python utils/data_preprocessing.py
 ```
 
-### 2. **Train Classifiers**
 
-- Train the BERT classifier:
 
-```bash
-python classifiers/bert_classifier.py
-```
 
-- Train the logistic regression classifier:
+# Suicide Detection Classification Framework
 
-```bash
-python classifiers/logistic_classifier.py
-```
+## Overview
+This project implements **three different classifiers** to detect suicide-related text in a dataset. The classifiers are:
 
-- Train the few-shot learning classifier:
+1. **Logistic Regression** (TF-IDF based)
+2. **BERT Fine-Tuning**
+3. **Few-Shot Learning with GPT-4o**
 
-```bash
-python classifiers/few_shot_classifier.py
-```
-
-### 3. **Evaluate Models**
-
-- Use evaluation methods provided in each classifier to compute metrics on the test set.
-
-### 4. **Visualize Metrics**
-
-- Run `visualization.py` to generate performance plots.
+Each classifier is evaluated based on **accuracy, precision, recall, F1-score, and ROC-AUC** to compare their performance.
 
 ---
 
-## Debugging
+## Training & Evaluation Process
 
-### 1. **Dataset Inspection**
+### 1. Logistic Regression & BERT Classifiers
+#### Training and Evaluation Process
+- **80/20 Split**
+  - **80% of the dataset** is used for training.
+  - **20% of the dataset** is kept as the final test set (**never seen during training**).
 
-Use `debug_bert.py` to debug tokenized datasets:
+- **5-Fold Cross-Validation on the 80% Training Set**
+  - The **80% training data** is **split into 5 equal folds**.
+  - The model is trained **5 times**, each time:
+    - **Using 4 folds (64% of original dataset) for training.**
+    - **Using 1 fold (16% of original dataset) for validation.**
+  - The **best-performing fold is selected**.
 
-```bash
-python classifiers/debug_bert.py
-```
+- **Final Model Training on the Full 80% Training Data**
+  - The model is **retrained using all 80% of the data** (not just 4 folds).
+  - This final model is **not validated again**—it's ready for testing.
 
-### 2. **Batch Inspection**
+- **Final Testing on the 20% Test Set**
+  - The final trained model is **evaluated once on the 20% test set**.
+  - **Performance metrics** (accuracy, F1-score, precision, recall, ROC-AUC) are calculated.
 
-Inspect input shapes and data types during training:
-
-```python
-for batch in train_loader:
-    print(f"Batch Input IDs: {batch['input_ids'].shape}")
-    print(f"Batch Attention Mask: {batch['attention_mask'].shape}")
-    print(f"Batch Labels: {batch['labels'].shape}")
-    break
-```
-
----
-
-## Outputs
-
-- **Models**: Saved in `outputs/models/` with timestamps.
-- **Logs**: Training and evaluation logs in `outputs/logs/`.
-- **Metrics**: JSON files with metrics for analysis.
+✅ **This is the same process for both Logistic Regression and BERT.**
 
 ---
 
-## NEXT STEP
-- debug the bert error Error: np.int64(7) - it happened after I did this "Limit Dataset loading in memory, currently, your TextDataset class holds the entire dataset in memory.  For large datasets, use a dataloader with a custom _getitem_ to load data dynamically"
+### 2. Few-Shot Learning (GPT-4o)
+🚨 **The Few-Shot Classifier does NOT follow the same 80/20 + 5-Fold approach.**
+
+#### What’s Actually Happening in `few_shot_classifier.py`
+- **The Model Does NOT Train on 80% of the Data:**
+  - Instead of using 80% of the dataset for training, Few-Shot Learning **only uses a few predefined examples** (hardcoded in the script):
+    ```python
+    self.examples = [
+        {"text": "I feel like cutting myself.", "label": "suicide"},
+        {"text": "I am going to the gym.", "label": "non-suicide"},
+        {"text": "I want to hurt myself.", "label": "suicide"},
+        {"text": "I am feeling happy today.", "label": "non-suicide"},
+    ]
+    ```
+  - These **4 manually defined examples** act as "training data."
+
+- **Directly Uses GPT-4o to Classify the 20% Test Set**
+  - The model then takes the **20% test set** and classifies each text **based on the few-shot examples**.
+  - 🚨 **GPT-4o never sees the 80% training set.**
+  - Instead, it **relies only on the given few-shot examples** to make predictions.
+
+- **Performance Metrics Are Calculated on the 20% Test Set**
+  - After classifying the **20% test set**, performance is evaluated using:
+    ```python
+    val_preds = self.classify_batch(X_val)
+    metrics = {
+        'accuracy': accuracy_score(y_val, val_preds),
+        'precision': precision_score(y_val, val_preds, pos_label='suicide'),
+        'recall': recall_score(y_val, val_preds, pos_label='suicide'),
+        'f1': f1_score(y_val, val_preds, pos_label='suicide'),
+        'roc_auc': roc_auc_score((y_val == 'suicide').astype(int), val_probs)
+    }
+    ```
+  - ✅ **GPT-4o’s performance is only evaluated on the 20% test set.**
+
+---
+
+## Cross-Validation and Final Model Training Process
+This applies to **Logistic Regression & BERT Classifiers**, but NOT Few-Shot Learning.
+
+1. **Train-Test Split (80-20)**
+   - The dataset is first split into **80% training** and **20% testing**.
+   - The **test set (20%) remains untouched** until the final evaluation.
+
+2. **5-Fold Cross-Validation on the 80% Training Data**
+   - The **80% training data** is further split into **5 equal parts (folds)**.
+   - The model is trained **5 times**, each time:
+     - **4 folds (64% of total data) are used for training.**
+     - **1 fold (16% of total data) is used for validation.**
+   - This ensures that every data point is used for **validation once** and **training multiple times**.
+
+3. **Selecting the Best Model from Cross-Validation**
+   - After 5-fold CV, the **best-performing fold** is selected based on metrics like **F1-score, accuracy, precision, recall, and ROC-AUC**.
+   - The **best model configuration** (hyperparameters, training setup) is recorded.
+
+4. **Final Training on the Entire 80% Training Data**
+   - Instead of training on only 4 folds, the **final model is trained using the full 80% training data**.
+   - This **maximizes the available training data** to improve generalization.
+
+5. **Final Model Evaluation on the 20% Test Set**
+   - The **final trained model is tested ONCE on the 20% test set**.
+   - This provides an **unbiased** estimate of real-world performance.
+   - The test set **was never used in training or validation**, ensuring a **fair evaluation**.
+
+### Why This Process?
+✅ Prevents **data leakage** by keeping the test set separate.  
+✅ Ensures **comparability** between different models.  
+✅ Maximizes the **amount of training data** before final evaluation.  
+✅ Provides a **robust estimate** of real-world performance.  
+
+---
+
+## Next Steps: Fixing RAM Issues in Data Preprocessing
+
+### 🚨 Why Is RAM Usage High?
+Even though **only 10% of the dataset** is supposed to be used, the code is still processing **the full dataset** in some cases, leading to excessive RAM consumption.
+
+- **Multiple copies of DataFrames are created at each preprocessing step.**
+- **Tokenization (for BERT) and TF-IDF Vectorization (for Logistic Regression) are memory-intensive.**
+- **Parallel API calls for Few-Shot Learning store intermediate results in RAM.**
+- **Mac M1 (8GB RAM) struggles with large Pandas DataFrames and Torch tensors.**
+
+### 🛠️ How to Fix It?
+1. **Explicitly enforce dataset sampling at the beginning of preprocessing:**
+   ```python
+   df = df.sample(frac=0.1, random_state=42).reset_index(drop=True)  # Ensure only 10% is used
+   ```
+2. **Modify DataFrames in place to reduce memory consumption:**
+   ```python
+   df.dropna(subset=['text'], inplace=True)
+   df.drop_duplicates(subset=['text'], inplace=True)
+   ```
+3. **Reduce batch size in BERT training to lower GPU/CPU memory load.**
+4. **Reduce TF-IDF max features to minimize vectorization memory.**
+5. **Limit Few-Shot Learning API calls to prevent excessive memory usage.**
+
+---
+
+## Conclusion
+- **Logistic Regression & BERT Classifiers follow 80/20 + 5-Fold CV.**
+- **Few-Shot Learning only uses predefined examples and skips training.**
+- **RAM issues arise due to redundant DataFrames and large processing steps.**
+- **Optimizations will improve performance and prevent Mac M1 crashes.**
 

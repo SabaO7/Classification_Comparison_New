@@ -1,0 +1,17 @@
+2025-02-03 22:48:57,114 - ClassificationPipeline - INFO - Logging setup complete. Log file: outputs/comparison/logs/pipeline_20250203_224857.log
+2025-02-03 22:48:57,115 - ClassificationPipeline - INFO - Initialized ClassificationPipeline
+2025-02-03 22:48:57,115 - ClassificationPipeline - INFO - Starting classification pipeline at 20250203_224857
+2025-02-03 22:48:57,115 - ClassificationPipeline - INFO - Loading raw data from ../data/raw/Suicide_Detection.csv
+2025-02-03 22:48:57,115 - ClassificationPipeline - INFO - Loading raw data from ../data/raw/Suicide_Detection.csv
+2025-02-03 22:48:57,115 - ClassificationPipeline - DEBUG - Attempting to read with utf-8 encoding
+2025-02-03 22:48:58,853 - ClassificationPipeline - INFO - Initial data statistics: 232074 samples
+2025-02-03 22:48:59,596 - ClassificationPipeline - INFO - Final sample count after cleaning: 232074
+2025-02-03 22:48:59,608 - ClassificationPipeline - INFO - Class distribution:
+class
+suicide        0.5
+non-suicide    0.5
+Name: proportion, dtype: float64
+2025-02-03 22:48:59,613 - ClassificationPipeline - INFO - Loading tokenized data from ../data/tokenized/tokenized_data.pkl
+2025-02-03 22:49:28,271 - ClassificationPipeline - INFO - Running logistic classifier...
+2025-02-03 22:50:45,366 - ClassificationPipeline - ERROR - Error in logistic classifier: y_true takes value in {'non-suicide', 'suicide'} and pos_label is not specified: either make y_true take value in {0, 1} or {-1, 1} or pass pos_label explicitly.
+2025-02-03 22:50:45,367 - ClassificationPipeline - INFO - Running bert classifier...

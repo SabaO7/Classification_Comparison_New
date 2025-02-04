@@ -21,6 +21,7 @@ class LogisticClassifier(BaseClassifier):
     def __init__(self, config):
         super().__init__(config)
         self.vectorizer = None 
+        
 
     
     def save_model(self, model, prefix="final_model"):
@@ -41,6 +42,25 @@ class LogisticClassifier(BaseClassifier):
             json.dump(metrics, f, indent=4)
         self.logger.info(f"Metrics saved to {metrics_file}")
 
+    def save_fold_results(self, fold_results: List[Dict], prefix: str) -> str:
+        """
+        Save results from all folds
+        
+        Args:
+            fold_results (List[Dict]): List of dictionaries containing fold results
+            prefix (str): Prefix for the output file name
+            
+        Returns:
+            str: Path to saved results file
+        """
+        try:
+            output_file = os.path.join(self.metrics_dir, f'{prefix}_fold_results_{self.timestamp}.csv')
+            pd.DataFrame(fold_results).to_csv(output_file, index=False)
+            self.logger.info(f"Saved fold results to {output_file}")
+            return output_file
+        except Exception as e:
+            self.logger.error(f"Error saving fold results: {str(e)}")
+            raise
 
     def preprocess_data(self, texts: List[str], is_training: bool = False) -> np.ndarray:
         """
@@ -59,7 +79,7 @@ class LogisticClassifier(BaseClassifier):
         if is_training and self.vectorizer is None:
             self.logger.info("Initializing and fitting TF-IDF vectorizer...")
             self.vectorizer = TfidfVectorizer(
-                max_features=5000,
+                max_features=3000, #reduce the number of features to 3000 NEW
                 min_df=2,
                 max_df=0.95
             )
@@ -239,19 +259,22 @@ class LogisticClassifier(BaseClassifier):
         return model
         
     def evaluate_model(self,
-                      model: LogisticRegression,
-                      X_test: List[str],
-                      y_test: np.ndarray) -> Dict:
+                    model: LogisticRegression,
+                    X_test: List[str],
+                    y_test: np.ndarray) -> Tuple[Dict, np.ndarray, np.ndarray]:
         """
-        Evaluate model on test set
+        Evaluate model on test set.
         
         Args:
-            model: Trained model
-            X_test: Test texts
-            y_test: Test labels
+            model: Trained Logistic Regression model.
+            X_test: List of test texts.
+            y_test: Test labels.
             
         Returns:
-            Dict: Evaluation metrics
+            Tuple[Dict, np.ndarray, np.ndarray]:
+                - A dictionary of evaluation metrics.
+                - An array of true labels.
+                - An array of predicted probabilities for the positive class.
         """
         self.logger.info("Evaluating on test set...")
         self.logger.info(f"Test set size: {len(X_test)}")
@@ -274,7 +297,7 @@ class LogisticClassifier(BaseClassifier):
         
         self.logger.info(f"Test set metrics: {metrics}")
         
-        # Save predictions
+        # Save predictions to CSV
         pd.DataFrame({
             'text': X_test,
             'prediction': y_pred,
@@ -285,7 +308,10 @@ class LogisticClassifier(BaseClassifier):
             index=False
         )
         
-        return metrics
+        return metrics, y_test.tolist(), y_prob.tolist()
+
+
+
         
     def predict(self, texts: List[str]) -> np.ndarray:
         """

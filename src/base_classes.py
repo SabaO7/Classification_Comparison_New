@@ -10,6 +10,42 @@ from sklearn.model_selection import train_test_split, StratifiedKFold
 import json
 import sys
 
+
+"""
+Cross-Validation and Final Model Training Process:
+
+1. **Train-Test Split (80-20)**
+   - The dataset is first split into **80% training** and **20% testing**.
+   - The **test set (20%) remains untouched** until the final evaluation.
+
+2. **5-Fold Cross-Validation on the 80% Training Data**
+   - The **80% training data** is further split into **5 equal parts (folds)**.
+   - The model is trained **5 times**, each time:
+     - **4 folds (64% of total data) are used for training.**
+     - **1 fold (16% of total data) is used for validation.**
+   - This ensures that every data point is used for **validation once** and **training multiple times**.
+
+3. **Selecting the Best Model from Cross-Validation**
+   - After 5-fold CV, the **best-performing fold** is selected based on metrics like **F1-score, accuracy, precision, recall, and ROC-AUC**.
+   - The **best model configuration** (hyperparameters, training setup) is recorded.
+
+4. **Final Training on the Entire 80% Training Data**
+   - Instead of training on only 4 folds, the **final model is trained using the full 80% training data**.
+   - This **maximizes the available training data** to improve generalization.
+
+5. **Final Model Evaluation on the 20% Test Set**
+   - The **final trained model is tested ONCE on the 20% test set**.
+   - This provides an **unbiased** estimate of real-world performance.
+   - The test set **was never used in training or validation**, ensuring a **fair evaluation**.
+
+### **Why This Process?**
+✅ Prevents **data leakage** by keeping the test set separate.  
+✅ Ensures **comparability** between different models.  
+✅ Maximizes the **amount of training data** before final evaluation.  
+✅ Provides a **robust estimate** of real-world performance.  
+"""
+
+
 class ModelType(Enum):
     """Enumeration of supported model types"""
     LOGISTIC = "logistic"
@@ -107,6 +143,7 @@ class BaseClassifier:
 
         self.logger.info(f"Logging initialized. Log file: {log_file}")
         
+    
     def save_config(self):
         """Save model configuration"""
         config_file = os.path.join(self.model_dir, f'config_{self.timestamp}.json')
@@ -117,70 +154,150 @@ class BaseClassifier:
         except Exception as e:
             self.logger.error(f"Error saving configuration: {str(e)}")
         
+
+    def convert_numpy(self, obj):
+        """
+        Convert NumPy and Pandas objects to JSON-serializable formats.
+        """
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()  # Convert NumPy array to list
+        elif isinstance(obj, np.generic): 
+            return obj.item()  # Convert NumPy scalar to Python int/float
+        elif isinstance(obj, pd.Series): 
+            return obj.tolist()  # Convert Pandas Series to list
+        elif isinstance(obj, pd.DataFrame): 
+            return obj.to_dict(orient="records")  # Convert DataFrame to list of dicts
+        elif isinstance(obj, dict):  # Ensure nested dicts are also converted
+            return {k: self.convert_numpy(v) for k, v in obj.items()}
+        elif isinstance(obj, list):  # Ensure lists with NumPy objects are converted
+            return [self.convert_numpy(v) for v in obj]
+        return obj  # Return as-is if not a NumPy/Pandas type
+
+
+
     def save_metrics(self, metrics: Dict, prefix: str) -> str:
         """
-        Save evaluation metrics to file
-        
-        Args:
-            metrics (Dict): Dictionary containing evaluation metrics
-            prefix (str): Prefix for the output file name
-            
-        Returns:
-            str: Path to saved metrics file
+        Save evaluation metrics to file, ensuring NumPy arrays are converted.
         """
         try:
+            # Convert everything before saving
+            metrics_serializable = self.convert_numpy(metrics)
+
+            # Debugging step to check if conversion worked
+            print(f"Debug (save_metrics): {metrics_serializable}")
+
             output_file = os.path.join(self.metrics_dir, f'{prefix}_metrics_{self.timestamp}.json')
             with open(output_file, 'w') as f:
-                json.dump(metrics, f, indent=4)
+                json.dump(metrics_serializable, f, indent=4)
+
             self.logger.info(f"Saved metrics to {output_file}")
             return output_file
         except Exception as e:
             self.logger.error(f"Error saving metrics: {str(e)}")
             raise
-        
-    def save_fold_results(self, fold_results: List[Dict], prefix: str) -> str:
-        """
-        Save results from all folds
-        
-        Args:
-            fold_results (List[Dict]): List of dictionaries containing fold results
-            prefix (str): Prefix for the output file name
-            
-        Returns:
-            str: Path to saved results file
-        """
-        try:
-            output_file = os.path.join(self.metrics_dir, f'{prefix}_fold_results_{self.timestamp}.csv')
-            pd.DataFrame(fold_results).to_csv(output_file, index=False)
-            self.logger.info(f"Saved fold results to {output_file}")
-            return output_file
-        except Exception as e:
-            self.logger.error(f"Error saving fold results: {str(e)}")
-            raise
-    
+
+
     def calculate_aggregate_metrics(self, fold_results: List[Dict]) -> Tuple[Dict, Dict]:
         """
-        Calculate mean and standard deviation of metrics across folds
-        
-        Args:
-            fold_results (List[Dict]): List of dictionaries containing fold results
-            
-        Returns:
-            Tuple[Dict, Dict]: Mean and standard deviation of metrics
+        Calculate mean and standard deviation of metrics across folds,
+        ensuring all values are JSON serializable.
         """
         try:
             metrics_df = pd.DataFrame(fold_results)
-            mean_metrics = metrics_df.mean().to_dict()
-            std_metrics = metrics_df.std().to_dict()
-            
+
+            mean_metrics = self.convert_numpy(metrics_df.mean().to_dict())
+            std_metrics = self.convert_numpy(metrics_df.std().to_dict())
+
+            # Debugging: Print converted values
+            print(f"Debug (mean_metrics): {mean_metrics}")
+            print(f"Debug (std_metrics): {std_metrics}")
+
             self.logger.info("Calculated aggregate metrics:")
             for metric, value in mean_metrics.items():
                 self.logger.info(f"{metric}: {value:.4f} ± {std_metrics[metric]:.4f}")
-                
+            
             return mean_metrics, std_metrics
         except Exception as e:
             self.logger.error(f"Error calculating aggregate metrics: {str(e)}")
             raise
+
+        
+    def save_comparison_results(self, results: dict) -> dict:
+        """
+        Save model comparison results in both JSON and CSV.
+
+        Args:
+            results (dict): Dictionary containing results for each model.
+
+        Returns:
+            dict: Summary of best-performing model.
+        """
+        self.logger.info("Saving comparison results...")
+
+        best_model = None
+        best_f1_score = 0.0
+        comparison_data = []
+
+        for model_name, (cv_metrics, final_metrics, best_config) in results.items():
+            final_metrics = self.convert_numpy(final_metrics)
+            best_config = self.convert_numpy(best_config)
+
+            comparison_data.append({
+                "Model": model_name,
+                "F1 Score": final_metrics["f1"],
+                "Accuracy": final_metrics["accuracy"],
+                "Precision": final_metrics["precision"],
+                "Recall": final_metrics["recall"],
+                "ROC AUC": final_metrics["roc_auc"]
+            })
+
+            if final_metrics["f1"] > best_f1_score:
+                best_f1_score = final_metrics["f1"]
+                best_model = model_name
+
+        summary = {"best_model": best_model, "best_f1_score": best_f1_score}
+
+        csv_path = os.path.join(self.metrics_dir, f"comparison_summary_{self.timestamp}.csv")
+        json_path = os.path.join(self.metrics_dir, f"comparison_summary_{self.timestamp}.json")
+
+        pd.DataFrame(comparison_data).to_csv(csv_path, index=False)
+        with open(json_path, "w") as f:
+            json.dump(summary, f, indent=4)
+
+        self.logger.info(f"Comparison summary saved to {csv_path} and {json_path}")
+        return summary
+
+    
+    def save_fold_results(self, fold_metrics: List[Dict], prefix: str) -> None:
+        """
+        Save fold results in both JSON and CSV format.
+
+        Args:
+            fold_metrics (List[Dict]): List of fold evaluation metrics.
+            prefix (str): Prefix for filenames.
+        """
+        output_json = os.path.join(self.metrics_dir, f"{prefix}_{self.timestamp}.json")
+        output_csv = os.path.join(self.metrics_dir, f"{prefix}_{self.timestamp}.csv")
+
+        try:
+            # Convert NumPy to native types
+            fold_metrics = self.convert_numpy(fold_metrics)
+
+            # Save as JSON
+            with open(output_json, "w") as f:
+                json.dump(fold_metrics, f, indent=4)
+            self.logger.info(f"Saved fold results to {output_json}")
+
+            # Save as CSV
+            df = pd.DataFrame(fold_metrics)
+            df.to_csv(output_csv, index=False)
+            self.logger.info(f"Saved fold results to {output_csv}")
+
+        except Exception as e:
+            self.logger.error(f"Error saving fold results: {str(e)}")
+            raise
+
+ 
     
     @staticmethod
     def clean_text(text: str) -> str:
@@ -267,11 +384,19 @@ class BaseClassifier:
                 self.logger.info(f"\nTraining fold {fold+1}/{self.config.num_iterations}")
                 
                 # Get fold data
-                fold_X_train = [X_train[i] for i in train_idx]
-                fold_y_train = y_train[train_idx]
-                fold_X_val = [X_train[i] for i in val_idx]
-                fold_y_val = y_train[val_idx]
-                
+                if isinstance(X_train, pd.DataFrame) or isinstance(X_train, pd.Series):
+                    fold_X_train = [X_train.iloc[i] for i in train_idx]
+                    fold_y_train = y_train.iloc[train_idx]
+                    fold_X_val = [X_train.iloc[i] for i in val_idx]
+                    fold_y_val = y_train.iloc[val_idx]
+                elif isinstance(X_train, list):
+                    fold_X_train = [X_train[i] for i in train_idx]
+                    fold_y_train = y_train[train_idx]
+                    fold_X_val = [X_train[i] for i in val_idx]
+                    fold_y_val = y_train[val_idx]
+                else:
+                    raise ValueError("Unsupported data type for X_train and y_train")
+                    
                 # Log fold distribution
                 self.logger.debug(f"Fold {fold} sizes - Train: {len(fold_X_train)}, Val: {len(fold_X_val)}")
                 
@@ -300,8 +425,9 @@ class BaseClassifier:
             
             # 6. Evaluate on held-out test set
             self.logger.info("Evaluating on held-out test set...")
-            test_metrics = self.evaluate_model(final_model, X_test, y_test)
+            test_metrics, final_labels, final_probs = self.evaluate_model(final_model, X_test, y_test)
             self.logger.info(f"Final test metrics: {test_metrics}")
+
             
             # Calculate and save metrics
             mean_cv_metrics, std_cv_metrics = self.calculate_aggregate_metrics(cv_metrics)
@@ -313,7 +439,9 @@ class BaseClassifier:
             self.save_metrics(std_cv_metrics, f"{self.__class__.__name__}_cv_std")
             
             self.logger.info("Training pipeline completed successfully!")
-            return cv_metrics, test_metrics, best_config
+            return cv_metrics, test_metrics, best_config, final_labels, final_probs
+        
+            
             
         except Exception as e:
             self.logger.error(f"Error in training pipeline: {str(e)}")
@@ -327,6 +455,13 @@ class BaseClassifier:
         """To be implemented by specific classifier classes"""
         raise NotImplementedError
         
-    def evaluate_model(self, model: Any, X_test: List[str], y_test: np.ndarray) -> Dict:
-        """To be implemented by specific classifier classes"""
+    def evaluate_model(self, model: Any, X_test: List[str], y_test: np.ndarray) -> Tuple[Dict, np.ndarray, np.ndarray]:
+        """To be implemented by specific classifier classes.
+        
+        Returns:
+            A tuple containing:
+                - A dictionary of evaluation metrics.
+                - An array of true labels.
+                - An array of predicted probabilities.
+        """
         raise NotImplementedError

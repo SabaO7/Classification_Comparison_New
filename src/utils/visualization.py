@@ -63,32 +63,31 @@ class VisualizationManager:
         
         self.logger.info("Logging setup complete")
         
-    def save_plot(self, 
-                 filename: str,
-                 fig: Optional[plt.Figure] = None,
-                 dpi: int = 300) -> str:
+    def save_plot(self, filename: str, fig: Optional[plt.Figure] = None, dpi: int = 300) -> str:
         """
-        Save plot with error handling and logging
-        
+        Save plot with error handling and logging.
+
         Args:
-            filename (str): Name for the plot file
-            fig (Optional[plt.Figure]): Figure to save
-            dpi (int): DPI for saved image
-            
+            filename (str): Name for the plot file.
+            fig (Optional[plt.Figure]): Figure to save.
+            dpi (int): DPI for saved image.
+
         Returns:
-            str: Path to saved plot
+            str: Path to saved plot.
         """
         try:
             filepath = os.path.join(self.output_dir, filename)
             if fig is None:
                 fig = plt.gcf()
             fig.savefig(filepath, dpi=dpi, bbox_inches='tight')
+            plt.show()  # Ensure the plot renders (useful for debugging)
             plt.close(fig)
             self.logger.info(f"Saved plot to {filepath}")
             return filepath
         except Exception as e:
             self.logger.error(f"Error saving plot {filename}: {str(e)}")
             raise
+
         
     # def plot_metrics_across_iterations(self,
     #                                 metrics_list: List[Dict],
@@ -200,111 +199,78 @@ class VisualizationManager:
             raise
 
         
-    def plot_roc_curves(self,
-                       y_true: np.ndarray,
-                       y_prob: np.ndarray,
-                       model_name: str,
-                       fold: Optional[int] = None) -> None:
+    def plot_roc_curves(self, y_true: np.ndarray, y_prob: np.ndarray, model_name: str, fold: Optional[int] = None):
         """
-        Plot ROC curve with AUC score
-        
+        Plot and save ROC curve.
+
         Args:
-            y_true (np.ndarray): True labels
-            y_prob (np.ndarray): Predicted probabilities
-            model_name (str): Name of the model
-            fold (Optional[int]): Fold number if applicable
+            y_true (np.ndarray): True labels.
+            y_prob (np.ndarray): Predicted probabilities.
+            model_name (str): Name of the model.
+            fold (Optional[int]): Fold number if applicable.
         """
         fold_str = f"Fold {fold}" if fold is not None else "Final"
         self.logger.info(f"Plotting ROC curve for {model_name} - {fold_str}")
-        
+
         try:
             fig, ax = plt.subplots(figsize=(8, 8))
-            
-            # Calculate ROC curve
+
             fpr, tpr, _ = roc_curve(y_true, y_prob)
             roc_auc = auc(fpr, tpr)
-            
-            # Plot ROC curve
-            ax.plot(fpr, tpr, color='darkorange', lw=2,
-                   label=f'ROC curve (AUC = {roc_auc:.2f})')
+
+            ax.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (AUC = {roc_auc:.2f})')
             ax.plot([0, 1], [0, 1], color='navy', linestyle='--')
-            
+
             ax.set_xlim([0.0, 1.0])
             ax.set_ylim([0.0, 1.05])
-            ax.set_xlabel('False Positive Rate', fontsize=12)
-            ax.set_ylabel('True Positive Rate', fontsize=12)
-            ax.set_title(f'ROC Curve - {model_name} {fold_str}', fontsize=14, pad=20)
+            ax.set_xlabel('False Positive Rate')
+            ax.set_ylabel('True Positive Rate')
+            ax.set_title(f'ROC Curve - {model_name} {fold_str}')
             ax.legend(loc='lower right')
-            ax.grid(True, alpha=0.3)
-            
-            self.save_plot(
-                f'roc_curve_{model_name}_{fold_str.lower()}_{self.timestamp}.png',
-                fig
-            )
-            
+
+            self.save_plot(f'roc_curve_{model_name}_{fold_str.lower()}_{self.timestamp}.png', fig)
+
         except Exception as e:
             self.logger.error(f"Error plotting ROC curve: {str(e)}")
             raise
+
         
-    def plot_confusion_matrix(self,
-                            y_true: np.ndarray,
-                            y_pred: np.ndarray,
-                            model_name: str,
-                            fold: Optional[int] = None) -> None:
+    def plot_confusion_matrix(self, y_true: np.ndarray, y_pred: np.ndarray, model_name: str, fold: Optional[int] = None):
         """
-        Plot confusion matrix with normalized values
-        
+        Plot confusion matrix and save as CSV.
+
         Args:
-            y_true (np.ndarray): True labels
-            y_pred (np.ndarray): Predicted labels
-            model_name (str): Name of the model
-            fold (Optional[int]): Fold number if applicable
+            y_true (np.ndarray): True labels.
+            y_pred (np.ndarray): Predicted labels.
+            model_name (str): Name of the model.
+            fold (Optional[int]): Fold number if applicable.
         """
         fold_str = f"Fold {fold}" if fold is not None else "Final"
         self.logger.info(f"Plotting confusion matrix for {model_name} - {fold_str}")
-        
+
         try:
-            # Calculate confusion matrix
             cm = confusion_matrix(y_true, y_pred)
             cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
-            
-            # Create subplots for both raw and normalized matrices
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
-            
-            # Plot raw counts
-            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax1)
-            ax1.set_xlabel('Predicted')
-            ax1.set_ylabel('True')
-            ax1.set_title('Raw Counts')
-            
-            # Plot normalized values
-            sns.heatmap(cm_normalized, annot=True, fmt='.2%', cmap='Blues', ax=ax2)
-            ax2.set_xlabel('Predicted')
-            ax2.set_ylabel('True')
-            ax2.set_title('Normalized')
-            
-            plt.suptitle(f'Confusion Matrix - {model_name} {fold_str}',
-                        fontsize=14, y=1.05)
-            
-            self.save_plot(
-                f'confusion_matrix_{model_name}_{fold_str.lower()}_{self.timestamp}.png',
-                fig
-            )
-            
-            # Save raw numbers to CSV
-            cm_df = pd.DataFrame(
-                cm,
-                index=['Actual Negative', 'Actual Positive'],
-                columns=['Predicted Negative', 'Predicted Positive']
-            )
-            cm_df.to_csv(os.path.join(
-                self.output_dir,
-                f'confusion_matrix_{model_name}_{fold_str.lower()}_{self.timestamp}.csv'
-            ))
-            
+
+            fig, ax = plt.subplots(figsize=(6, 6))
+            sns.heatmap(cm_normalized, annot=True, fmt='.2%', cmap='Blues', ax=ax)
+
+            ax.set_xlabel('Predicted')
+            ax.set_ylabel('True')
+            ax.set_title(f'Confusion Matrix - {model_name} {fold_str}')
+
+            self.save_plot(f'confusion_matrix_{model_name}_{fold_str.lower()}_{self.timestamp}.png', fig)
+
+            # Save as CSV
+            cm_df = pd.DataFrame(cm, index=['Actual 0', 'Actual 1'], columns=['Predicted 0', 'Predicted 1'])
+            cm_csv_path = os.path.join(self.output_dir, f'confusion_matrix_{model_name}_{fold_str.lower()}_{self.timestamp}.csv')
+            cm_df.to_csv(cm_csv_path)
+            self.logger.info(f"Saved confusion matrix to {cm_csv_path}")
+
         except Exception as e:
             self.logger.error(f"Error plotting confusion matrix: {str(e)}")
             raise
+
         
     def plot_model_comparison(self,
                             comparison_results: Dict,

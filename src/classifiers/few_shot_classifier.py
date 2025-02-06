@@ -21,11 +21,16 @@ client = openai.OpenAI(api_key=api_key)
 
 class FewShotClassifier(BaseClassifier):
     """
-    Few-shot learning classifier implementation using OpenAI GPT
+    Few-shot learning classifier implementation using OpenAI GPT.
     
     Implements a zero-shot or few-shot approach using GPT.
     Uses parallel processing, caching for efficiency,
     and a retry mechanism for API rate limits.
+    
+    NOTE: Only 10% of the full dataset will be used.
+          This 10% subset is split into 80% training (used solely as a reference)
+          and 20% validation, on which inference is performed.
+          Logging messages throughout clarify that this is an inference-only process.
     """
     
     def __init__(self, config):
@@ -49,6 +54,37 @@ class FewShotClassifier(BaseClassifier):
         
         # Setup prompt templates
         self.setup_prompt_templates()
+
+    def prepare_data(self, X: List[str], y: np.ndarray, random_state: int = 42) -> Tuple[List[str], np.ndarray, List[str], np.ndarray]:
+        """
+        Subsample 10% of the full dataset and split that subset into 80% training (reference only)
+        and 20% validation (used for inference).
+        
+        Args:
+            X: List of text samples.
+            y: Corresponding labels.
+            random_state: Seed for reproducibility.
+        
+        Returns:
+            X_train, y_train, X_val, y_val
+        """
+        self.logger.info("Subsampling 10% of the dataset for few-shot learning.")
+        total_samples = len(X)
+        subset_size = max(1, int(0.1 * total_samples))
+        indices = np.random.choice(total_samples, subset_size, replace=False)
+        X_subset = [X[i] for i in indices]
+        if isinstance(y, np.ndarray):
+            y_subset = y[indices]
+        else:
+            y_subset = np.array([y[i] for i in indices])
+        
+        self.logger.info("Splitting the 10% subset into 80% training (reference) and 20% validation (for inference).")
+        from sklearn.model_selection import train_test_split
+        X_train, X_val, y_train, y_val = train_test_split(
+            X_subset, y_subset, train_size=0.8, random_state=random_state
+        )
+        self.logger.info(f"Data split complete: {len(X_train)} training samples (reference), {len(X_val)} validation samples (for inference).")
+        return X_train, y_train, X_val, y_val
 
     def save_results(self, results, prefix="results"):
         results_file = os.path.join(self.results_dir, f"{prefix}_{self.timestamp}.json")
@@ -203,15 +239,18 @@ class FewShotClassifier(BaseClassifier):
         fold: int
     ) -> Tuple[Any, Dict, Dict]:
         """
-        Evaluate one fold (the few-shot approach does not truly 'train').
+        Evaluate one fold.
         
+        Note: In few-shot learning, the training portion is used only as a reference.
+              All classification (i.e., inference) is performed on the validation set.
         Returns:
             (model, metrics, config) -> (None, metrics_dict, config_dict)
         """
         self.logger.info(f"Evaluating fold {fold+1}")
+        self.logger.info("Few-shot learning mode: Only 10% of the dataset is used. The training set is for reference only; inference is performed solely on the validation set.")
         self.logger.info(f"Validation set size: {len(X_val)}")
         
-        # Classify validation texts
+        # Classify validation texts (running inference only)
         val_preds = self.classify_batch(X_val)
         val_preds = np.array(val_preds)
 
@@ -240,7 +279,7 @@ class FewShotClassifier(BaseClassifier):
         
         self.logger.info(f"Fold {fold+1} metrics: {metrics}")
         
-        # For record-keeping, store the prompt examples
+        # For record-keeping, store the prompt examples and configuration
         config = {
             'examples': self.examples,
             'prompt_template': str(self.few_shot_prompt),
@@ -257,8 +296,11 @@ class FewShotClassifier(BaseClassifier):
     ) -> Any:
         """
         No 'training' step needed for a few-shot approach.
+        The provided training data is only a reference. 
+        
+        This method logs that final training is skipped in favor of inference.
         """
-        self.logger.info("Few-shot classifier doesn't require final training.")
+        self.logger.info("Few-shot classifier doesn't require final training. Running in inference mode only.")
         return None
         
     def evaluate_model(
@@ -276,7 +318,7 @@ class FewShotClassifier(BaseClassifier):
                 - An array of true labels (converted to binary: 1 for 'suicide', 0 otherwise).
                 - An array of predicted probabilities (as floats).
         """
-        self.logger.info("Evaluating on test set...")
+        self.logger.info("Evaluating on test set (inference mode)...")
         self.logger.info(f"Test set size: {len(X_test)}")
         
         # Classify test texts
@@ -332,14 +374,14 @@ class FewShotClassifier(BaseClassifier):
         """
         Make predictions on arbitrary new texts using GPT.
         """
-        self.logger.info(f"Making predictions on {len(texts)} new texts")
+        self.logger.info(f"Making predictions on {len(texts)} new texts (inference mode)...")
         return self.classify_batch(texts)
         
     def predict_proba(self, texts: List[str]) -> np.ndarray:
         """
         Get predicted probabilities for 'suicide' class on new texts.
         """
-        self.logger.info(f"Getting prediction probabilities for {len(texts)} texts")
+        self.logger.info(f"Getting prediction probabilities for {len(texts)} texts (inference mode)...")
         predictions = self.predict(texts)
         # Convert to 1.0 if suicide, else 0.0
         return np.array([1.0 if pred == 'suicide' else 0.0 for pred in predictions])

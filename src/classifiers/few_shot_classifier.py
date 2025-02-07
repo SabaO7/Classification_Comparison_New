@@ -27,10 +27,7 @@ class FewShotClassifier(BaseClassifier):
     Implements a zero-shot or few-shot approach using GPT.
     Uses parallel processing, caching for efficiency,
     and a retry mechanism for API rate limits.
-    
-    NOTE: Only 10% of the full dataset is used.
-          That 10% subset is split into 80% 'training' (reference only)
-          and 20% 'validation' (for inference).
+
     """
     
     def __init__(self, config: ModelConfig, clf_dirs: dict):

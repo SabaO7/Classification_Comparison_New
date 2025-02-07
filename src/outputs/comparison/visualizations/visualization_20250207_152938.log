@@ -1,0 +1,41 @@
+2025-02-07 15:29:38,731 - utils.visualization - INFO - Logging setup complete
+2025-02-07 15:29:38,731 - utils.visualization - INFO - Initialized VisualizationManager with output dir: outputs/comparison/visualizations
+2025-02-07 15:29:57,315 - utils.visualization - INFO - Logging setup complete
+2025-02-07 15:29:57,316 - utils.visualization - INFO - Initialized VisualizationManager with output dir: outputs/run_20250207_152938/classifiers/logistic/visualizations
+2025-02-07 15:29:57,316 - utils.visualization - INFO - Plotting ROC curve for logistic - Final
+2025-02-07 15:30:01,594 - utils.visualization - INFO - Saved plot to outputs/run_20250207_152938/classifiers/logistic/visualizations/roc_curve_logistic_final_20250207_152957.png
+2025-02-07 15:30:01,594 - utils.visualization - INFO - Plotting confusion matrix for logistic - Final
+2025-02-07 15:30:02,441 - utils.visualization - INFO - Saved plot to outputs/run_20250207_152938/classifiers/logistic/visualizations/confusion_matrix_logistic_final_20250207_152957.png
+2025-02-07 15:30:02,444 - utils.visualization - INFO - Saved confusion matrix to outputs/run_20250207_152938/classifiers/logistic/visualizations/confusion_matrix_logistic_final_20250207_152957.csv
+2025-02-07 15:30:02,445 - utils.visualization - INFO - Plotting class distribution for logistic
+2025-02-07 15:30:03,190 - utils.visualization - INFO - Saved plot to outputs/run_20250207_152938/classifiers/logistic/visualizations/class_distribution_logistic_20250207_152957.png
+2025-02-07 15:42:13,328 - utils.visualization - INFO - Logging setup complete
+2025-02-07 15:42:13,329 - utils.visualization - INFO - Initialized VisualizationManager with output dir: outputs/run_20250207_152938/classifiers/bert/visualizations
+2025-02-07 15:42:13,329 - utils.visualization - INFO - Plotting ROC curve for bert - Final
+2025-02-07 15:52:54,979 - utils.visualization - INFO - Saved plot to outputs/run_20250207_152938/classifiers/bert/visualizations/roc_curve_bert_final_20250207_154213.png
+2025-02-07 15:52:54,983 - utils.visualization - INFO - Plotting confusion matrix for bert - Final
+2025-02-07 15:52:55,726 - utils.visualization - INFO - Saved plot to outputs/run_20250207_152938/classifiers/bert/visualizations/confusion_matrix_bert_final_20250207_154213.png
+2025-02-07 15:52:55,733 - utils.visualization - INFO - Saved confusion matrix to outputs/run_20250207_152938/classifiers/bert/visualizations/confusion_matrix_bert_final_20250207_154213.csv
+2025-02-07 15:52:55,734 - utils.visualization - INFO - Plotting class distribution for bert
+2025-02-07 15:52:56,308 - utils.visualization - INFO - Saved plot to outputs/run_20250207_152938/classifiers/bert/visualizations/class_distribution_bert_20250207_154213.png
+2025-02-07 17:11:59,657 - utils.visualization - INFO - Logging setup complete
+2025-02-07 17:11:59,670 - utils.visualization - INFO - Initialized VisualizationManager with output dir: outputs/run_20250207_152938/classifiers/few_shot/visualizations
+2025-02-07 17:11:59,671 - utils.visualization - INFO - Plotting ROC curve for few_shot - Final
+2025-02-07 17:12:08,006 - utils.visualization - INFO - Saved plot to outputs/run_20250207_152938/classifiers/few_shot/visualizations/roc_curve_few_shot_final_20250207_171159.png
+2025-02-07 17:12:08,007 - utils.visualization - INFO - Plotting confusion matrix for few_shot - Final
+2025-02-07 17:12:15,274 - utils.visualization - INFO - Saved plot to outputs/run_20250207_152938/classifiers/few_shot/visualizations/confusion_matrix_few_shot_final_20250207_171159.png
+2025-02-07 17:12:15,282 - utils.visualization - INFO - Saved confusion matrix to outputs/run_20250207_152938/classifiers/few_shot/visualizations/confusion_matrix_few_shot_final_20250207_171159.csv
+2025-02-07 17:12:15,283 - utils.visualization - INFO - Plotting class distribution for few_shot
+2025-02-07 17:12:17,247 - utils.visualization - INFO - Saved plot to outputs/run_20250207_152938/classifiers/few_shot/visualizations/class_distribution_few_shot_20250207_171159.png
+2025-02-07 17:12:17,253 - utils.visualization - INFO - Logging setup complete
+2025-02-07 17:12:17,254 - utils.visualization - INFO - Initialized VisualizationManager with output dir: outputs/run_20250207_152938/classifiers/logistic/visualizations
+2025-02-07 17:12:17,254 - utils.visualization - INFO - Plotting metrics across iterations for logistic
+2025-02-07 17:12:44,305 - utils.visualization - INFO - Saved plot to outputs/run_20250207_152938/classifiers/logistic/visualizations/metrics_across_iterations_logistic_20250207_171217.png
+2025-02-07 17:12:44,318 - utils.visualization - INFO - Logging setup complete
+2025-02-07 17:12:44,320 - utils.visualization - INFO - Initialized VisualizationManager with output dir: outputs/run_20250207_152938/classifiers/bert/visualizations
+2025-02-07 17:12:44,320 - utils.visualization - INFO - Plotting metrics across iterations for bert
+2025-02-07 17:12:49,728 - utils.visualization - INFO - Saved plot to outputs/run_20250207_152938/classifiers/bert/visualizations/metrics_across_iterations_bert_20250207_171244.png
+2025-02-07 17:12:49,738 - utils.visualization - INFO - Logging setup complete
+2025-02-07 17:12:49,739 - utils.visualization - INFO - Initialized VisualizationManager with output dir: outputs/run_20250207_152938/classifiers/few_shot/visualizations
+2025-02-07 17:12:49,740 - utils.visualization - INFO - Plotting metrics across iterations for few_shot
+2025-02-07 17:12:52,004 - utils.visualization - INFO - Saved plot to outputs/run_20250207_152938/classifiers/few_shot/visualizations/metrics_across_iterations_few_shot_20250207_171249.png

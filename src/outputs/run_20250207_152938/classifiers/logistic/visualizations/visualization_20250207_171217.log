@@ -1,0 +1,12 @@
+2025-02-07 17:12:17,253 - utils.visualization - INFO - Logging setup complete
+2025-02-07 17:12:17,254 - utils.visualization - INFO - Initialized VisualizationManager with output dir: outputs/run_20250207_152938/classifiers/logistic/visualizations
+2025-02-07 17:12:17,254 - utils.visualization - INFO - Plotting metrics across iterations for logistic
+2025-02-07 17:12:44,305 - utils.visualization - INFO - Saved plot to outputs/run_20250207_152938/classifiers/logistic/visualizations/metrics_across_iterations_logistic_20250207_171217.png
+2025-02-07 17:12:44,318 - utils.visualization - INFO - Logging setup complete
+2025-02-07 17:12:44,320 - utils.visualization - INFO - Initialized VisualizationManager with output dir: outputs/run_20250207_152938/classifiers/bert/visualizations
+2025-02-07 17:12:44,320 - utils.visualization - INFO - Plotting metrics across iterations for bert
+2025-02-07 17:12:49,728 - utils.visualization - INFO - Saved plot to outputs/run_20250207_152938/classifiers/bert/visualizations/metrics_across_iterations_bert_20250207_171244.png
+2025-02-07 17:12:49,738 - utils.visualization - INFO - Logging setup complete
+2025-02-07 17:12:49,739 - utils.visualization - INFO - Initialized VisualizationManager with output dir: outputs/run_20250207_152938/classifiers/few_shot/visualizations
+2025-02-07 17:12:49,740 - utils.visualization - INFO - Plotting metrics across iterations for few_shot
+2025-02-07 17:12:52,004 - utils.visualization - INFO - Saved plot to outputs/run_20250207_152938/classifiers/few_shot/visualizations/metrics_across_iterations_few_shot_20250207_171249.png

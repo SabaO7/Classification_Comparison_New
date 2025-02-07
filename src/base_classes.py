@@ -105,27 +105,22 @@ class BaseClassifier:
         self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.base_dir = os.path.join(config.output_dir, self.__class__.__name__.replace("Classifier", "").lower())
         
-        # Organized directories for the classifier
+        # New Subfolders: logs, cv, final, visualizations
         self.logs_dir = os.path.join(self.base_dir, "logs")
-        self.metrics_dir = os.path.join(self.base_dir, "metrics")
+        self.cv_dir = os.path.join(self.base_dir, "cv")
+        self.final_dir = os.path.join(self.base_dir, "final")
         self.visualizations_dir = os.path.join(self.base_dir, "visualizations")
-        self.models_dir = os.path.join(self.base_dir, "models")
-        self.results_dir = os.path.join(self.base_dir, "results")
-        self.model_artifacts_dir = os.path.join(self.models_dir, "artifacts")
-        
-        # Create directories
+
         for directory in [
-            self.logs_dir, 
-            self.metrics_dir, 
-            self.visualizations_dir, 
-            self.models_dir, 
-            self.results_dir, 
-            self.model_artifacts_dir
+            self.logs_dir,
+            self.cv_dir,
+            self.final_dir,
+            self.visualizations_dir
         ]:
             os.makedirs(directory, exist_ok=True)
-        
+
         self.setup_logging()
-        
+
     def setup_logging(self):
         """Configure logging for the classifier."""
         log_file = os.path.join(self.logs_dir, f"{self.__class__.__name__}_{self.timestamp}.log")
@@ -146,7 +141,8 @@ class BaseClassifier:
     
     def save_config(self):
         """Save model configuration"""
-        config_file = os.path.join(self.model_dir, f'config_{self.timestamp}.json')
+        config_file = os.path.join(self.final_dir, f'config_{self.timestamp}.json')
+
         try:
             with open(config_file, 'w') as f:
                 json.dump(self.config.to_dict(), f, indent=4)
@@ -186,7 +182,8 @@ class BaseClassifier:
             # Debugging step to check if conversion worked
             print(f"Debug (save_metrics): {metrics_serializable}")
 
-            output_file = os.path.join(self.metrics_dir, f'{prefix}_metrics_{self.timestamp}.json')
+            output_file = os.path.join(self.cv_dir, f'{prefix}_metrics_{self.timestamp}.json')
+            
             with open(output_file, 'w') as f:
                 json.dump(metrics_serializable, f, indent=4)
 
@@ -257,8 +254,9 @@ class BaseClassifier:
 
         summary = {"best_model": best_model, "best_f1_score": best_f1_score}
 
-        csv_path = os.path.join(self.metrics_dir, f"comparison_summary_{self.timestamp}.csv")
-        json_path = os.path.join(self.metrics_dir, f"comparison_summary_{self.timestamp}.json")
+        csv_path = os.path.join(self.final_dir, f"comparison_summary_{self.timestamp}.csv")
+        json_path = os.path.join(self.final_dir, f"comparison_summary_{self.timestamp}.json")
+
 
         pd.DataFrame(comparison_data).to_csv(csv_path, index=False)
         with open(json_path, "w") as f:
@@ -276,8 +274,8 @@ class BaseClassifier:
             fold_metrics (List[Dict]): List of fold evaluation metrics.
             prefix (str): Prefix for filenames.
         """
-        output_json = os.path.join(self.metrics_dir, f"{prefix}_{self.timestamp}.json")
-        output_csv = os.path.join(self.metrics_dir, f"{prefix}_{self.timestamp}.csv")
+        output_json = os.path.join(self.cv_dir, f"{prefix}_{self.timestamp}.json")
+        output_csv = os.path.join(self.cv_dir, f"{prefix}_{self.timestamp}.csv")
 
         try:
             # Convert NumPy to native types

@@ -25,7 +25,7 @@ class LogisticClassifier(BaseClassifier):
 
     
     def save_model(self, model, prefix="final_model"):
-        model_path = os.path.join(self.models_dir, f"{prefix}_{self.timestamp}.joblib")
+        model_path = os.path.join(self.final_dir, f"{prefix}_{self.timestamp}.joblib")
         joblib.dump(model, model_path)
         self.logger.info(f"Model saved to {model_path}")
 
@@ -37,7 +37,8 @@ class LogisticClassifier(BaseClassifier):
             metrics (dict): Dictionary containing evaluation metrics.
             prefix (str): Prefix for the output file name.
         """
-        metrics_file = os.path.join(self.metrics_dir, f"{prefix}_{self.timestamp}.json")
+        metrics_file = os.path.join(self.cv_dir, f"{prefix}_{self.timestamp}.json")
+
         with open(metrics_file, "w") as f:
             json.dump(metrics, f, indent=4)
         self.logger.info(f"Metrics saved to {metrics_file}")
@@ -54,7 +55,7 @@ class LogisticClassifier(BaseClassifier):
             str: Path to saved results file
         """
         try:
-            output_file = os.path.join(self.metrics_dir, f'{prefix}_fold_results_{self.timestamp}.csv')
+            output_file = os.path.join(self.cv_dir, f'{prefix}_fold_results_{self.timestamp}.csv')
             pd.DataFrame(fold_results).to_csv(output_file, index=False)
             self.logger.info(f"Saved fold results to {output_file}")
             return output_file
@@ -179,9 +180,10 @@ class LogisticClassifier(BaseClassifier):
     
         # Save fold model
         model_path = os.path.join(
-            self.model_artifacts_dir,  # Changed to use model_artifacts_dir
+            self.cv_dir,
             f"logistic_model_fold_{fold}_{self.timestamp}.joblib"
         )
+
         joblib.dump(model, model_path)
         self.logger.info(f"Saved fold model to {model_path}")
     
@@ -232,9 +234,10 @@ class LogisticClassifier(BaseClassifier):
 
         # Save model and vectorizer
         model_path = os.path.join(
-            self.config.output_dir,
+            self.final_dir,
             f"logistic_model_final_{self.timestamp}.joblib"
         )
+
         vectorizer_path = os.path.join(
             self.config.output_dir,
             f"tfidf_vectorizer_{self.timestamp}.joblib"

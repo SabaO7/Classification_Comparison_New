@@ -57,37 +57,30 @@ class FewShotClassifier(BaseClassifier):
 
     def prepare_data(self, X: List[str], y: np.ndarray, random_state: int = 42) -> Tuple[List[str], np.ndarray, List[str], np.ndarray]:
         """
-        Subsample 10% of the full dataset and split that subset into 80% training (reference only)
-        and 20% validation (used for inference).
-        
+        Use the dataset as provided (already preprocessed to 10%).
+        Only perform the 80% training (reference only) and 20% validation (inference) split.
+
         Args:
             X: List of text samples.
             y: Corresponding labels.
             random_state: Seed for reproducibility.
-        
+
         Returns:
             X_train, y_train, X_val, y_val
         """
-        self.logger.info("Subsampling 10% of the dataset for few-shot learning.")
-        total_samples = len(X)
-        subset_size = max(1, int(0.1 * total_samples))
-        indices = np.random.choice(total_samples, subset_size, replace=False)
-        X_subset = [X[i] for i in indices]
-        if isinstance(y, np.ndarray):
-            y_subset = y[indices]
-        else:
-            y_subset = np.array([y[i] for i in indices])
-        
-        self.logger.info("Splitting the 10% subset into 80% training (reference) and 20% validation (for inference).")
+        self.logger.info("Splitting dataset into 80% training (reference) and 20% validation (for inference).")
+
         from sklearn.model_selection import train_test_split
         X_train, X_val, y_train, y_val = train_test_split(
-            X_subset, y_subset, train_size=0.8, random_state=random_state
+            X, y, train_size=0.8, random_state=random_state
         )
+
         self.logger.info(f"Data split complete: {len(X_train)} training samples (reference), {len(X_val)} validation samples (for inference).")
         return X_train, y_train, X_val, y_val
 
+
     def save_results(self, results, prefix="results"):
-        results_file = os.path.join(self.results_dir, f"{prefix}_{self.timestamp}.json")
+        results_file = os.path.join(self.final_dir, f"{prefix}_{self.timestamp}.json")
         with open(results_file, "w") as f:
             json.dump(results, f, indent=4)
         self.logger.info(f"Results saved to {results_file}")

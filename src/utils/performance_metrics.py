@@ -8,9 +8,6 @@ from typing import List
 import json
 from datetime import datetime
 
-
-
-
 class PerformanceMetrics:
     """
     Tracks and records performance metrics for classifiers, including
@@ -33,15 +30,15 @@ class PerformanceMetrics:
         self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S") 
         os.makedirs(output_dir, exist_ok=True)
 
-    def track_performance(self, classifier_name: str, func, *args, **kwargs):
+    def track_performance(self, *args, classifier_name, func, **kwargs):
         """
         Track the time and GPU memory usage of a given function.
 
         Args:
-            classifier_name (str): Name of the classifier being tracked.
-            func (callable): Function to execute and track.
-            *args: Positional arguments for the function.
-            **kwargs: Keyword arguments for the function.
+            *args:            Positional arguments to pass along to `func`.
+            classifier_name:  Name of the classifier being tracked (keyword-only).
+            func:             The function to execute (keyword-only).
+            **kwargs:         Keyword arguments to pass along to `func`.
 
         Returns:
             Any: Result of the function execution.
@@ -49,18 +46,28 @@ class PerformanceMetrics:
         start_time = time.time()
         gpu_usage_start = torch.cuda.memory_allocated() if torch.cuda.is_available() else 0
 
-        # Execute the function and track performance
+        # Execute the function with the given args/kwargs
         result = func(*args, **kwargs)
 
+        # Capture time taken and GPU memory usage after execution
         end_time = time.time()
         gpu_usage_end = torch.cuda.memory_allocated() if torch.cuda.is_available() else 0
+
         time_taken = end_time - start_time
         gpu_usage = gpu_usage_end - gpu_usage_start
+
+        # result[1] should be the final_metrics dict, so we can safely do:
+        final_metrics = result[1] if len(result) > 1 else {}
 
         self.results.append({
             "Classifier": classifier_name,
             "Time (s)": time_taken,
-            "GPU Usage (bytes)": gpu_usage
+            "GPU Usage (bytes)": gpu_usage,
+            "Accuracy": final_metrics.get("accuracy", None),
+            "Precision": final_metrics.get("precision", None),
+            "Recall": final_metrics.get("recall", None),
+            "F1": final_metrics.get("f1", None),
+            "ROC AUC": final_metrics.get("roc_auc", None),
         })
 
         return result
@@ -69,13 +76,6 @@ class PerformanceMetrics:
     def compare_models(baseline_scores: List[float], new_scores: List[float]) -> bool:
         """
         Perform a t-test to compare two models' performance scores.
-
-        Args:
-            baseline_scores (List[float]): Scores from the baseline model.
-            new_scores (List[float]): Scores from the new model.
-
-        Returns:
-            bool: True if the difference is statistically significant (p < 0.05).
         """
         t_stat, p_value = stats.ttest_ind(baseline_scores, new_scores)
         return p_value < 0.05
@@ -102,13 +102,9 @@ class PerformanceMetrics:
 
         return df
 
-
     def plot_results(self, df: pd.DataFrame):
         """
         Plot the recorded performance metrics as a bar chart.
-
-        Args:
-            df (pd.DataFrame): DataFrame containing performance metrics.
         """
         fig, ax1 = plt.subplots(figsize=(10, 6))
 

@@ -1,455 +1,357 @@
-from logging import Logger
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, Trainer, TrainingArguments
+from transformers import (
+    AutoTokenizer,
+    AutoModelForSequenceClassification,
+    Trainer,
+    TrainingArguments,
+    DataCollatorWithPadding
+)
 import torch
 from torch.utils.data import Dataset, Subset
 import numpy as np
+import pandas as pd
 from typing import Dict, List, Tuple, Any
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 import os
-from base_classes import BaseClassifier, ModelConfig
-import shutil
-import json
-import pandas as pd
 import gc
-from transformers import DataCollatorWithPadding
-from sklearn.model_selection import StratifiedKFold  
+import json
 from scipy.special import softmax
 
+# Make sure these are present:
+from sklearn.model_selection import train_test_split, StratifiedKFold
 
-# Disable tokenizer parallelism to avoid deadlock warnings
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-# ----------------------------------------------------------------
-# 1) Check existing folds that have completed
-# ----------------------------------------------------------------
-metrics_dir = "outputs/bert/logs"
-completed_folds = []
-
-for fold_idx in range(5):
-    metrics_file = os.path.join(metrics_dir, f"metrics_fold_{fold_idx}.json")
-    if os.path.exists(metrics_file):
-        completed_folds.append(fold_idx)
-
-print("Completed folds:", completed_folds)
-
-# ----------------------------------------------------------------
-# 2) Single load of the data BEFORE the folds
-# ----------------------------------------------------------------
-print("Loading tokenized DataFrame once...")
-full_dataset = pd.read_pickle("../data/tokenized/tokenized_data.pkl")
-print(f"Loaded dataset with {len(full_dataset)} rows.")
+from base_classes import BaseClassifier, ModelConfig
 
 
-class TextDataset(Dataset):
-    def __init__(self, dataframe: pd.DataFrame):
-        self.data = dataframe.copy()
+class TokenizedSubset(Dataset):
+    """
+    A subset of a pre-tokenized DataFrame (with columns: 'tokenized', 'class'),
+    given a list of row indices.
+    """
+    def __init__(self, df: pd.DataFrame, indices: List[int]):
+        self.df = df
+        self.indices = indices
 
-        if "tokenized" not in self.data.columns:
-            raise ValueError("Dataset is missing 'tokenized' column.")
+    def __len__(self):
+        return len(self.indices)
 
-        self.data = self.data.dropna(subset=["tokenized"]).reset_index(drop=True)
-        print(f"✅ Loaded dataset with {len(self.data)} valid rows.")
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        real_idx = self.indices[idx]
+        row = self.df.iloc[real_idx]
+        token_dict = row["tokenized"] 
+        if not isinstance(token_dict, dict):
+            raise ValueError(f"Row {real_idx} has invalid 'tokenized' data: {token_dict}")
+        
+        # Convert "suicide" -> 1, otherwise 0
+        label = 1 if row["class"] == "suicide" else 0
 
-    def __getitem__(self, idx: int) -> Dict:
-        record = self.data.iloc[idx]
+        item = {
+            "input_ids": torch.tensor(token_dict["input_ids"], dtype=torch.long),
+            "attention_mask": torch.tensor(token_dict["attention_mask"], dtype=torch.long),
+            "labels": torch.tensor(label, dtype=torch.long)
+        }
+        if "token_type_ids" in token_dict and token_dict["token_type_ids"] is not None:
+            item["token_type_ids"] = torch.tensor(token_dict["token_type_ids"], dtype=torch.long)
 
-        try:
-            # ✅ Ensure tokenized data is a dictionary
-            if not isinstance(record["tokenized"], dict):
-                raise ValueError(f"Invalid tokenized format at index {idx}: {record['tokenized']}")
-
-            # ✅ Convert tokenized data into PyTorch tensors correctly
-            item = {
-                "input_ids": torch.tensor(record["tokenized"]["input_ids"], dtype=torch.long),
-                "attention_mask": torch.tensor(record["tokenized"]["attention_mask"], dtype=torch.long),
-            }
-
-            # ✅ Handle `token_type_ids` safely
-            if "token_type_ids" in record["tokenized"] and record["tokenized"]["token_type_ids"] is not None:
-                item["token_type_ids"] = torch.tensor(record["tokenized"]["token_type_ids"], dtype=torch.long)
-
-            # ✅ Ensure labels are integers
-            label = 1 if record["class"] == "suicide" else 0
-            item["labels"] = torch.tensor(label, dtype=torch.long)
-
-            return item
-        except Exception as e:
-            print(f"❌ Error processing record {idx}: {e}")
-            raise
-
+        return item
 
 
 class BERTClassifier(BaseClassifier):
     """
-    BERT-based classifier implementation with cross-validation.
+    A BERT classifier that relies on:
+      - BaseClassifier for cross-validation and final training logic.
+      - A pre-tokenized DataFrame with columns ["tokenized", "class"].
     """
 
-    def __init__(self, config: ModelConfig, dataset: TextDataset):
+    def __init__(self, config: ModelConfig, df: pd.DataFrame):
         super().__init__(config)
-        self.logger.info("Initializing BERT classifier...")
+        self.logger.info("Initializing BERT classifier with pre-tokenized DataFrame...")
 
-        # ✅ Store the dataset once to avoid reloading
-        self.dataset = dataset
+        self.df = df.reset_index(drop=True)
+        if "tokenized" not in self.df.columns:
+            raise ValueError("DataFrame is missing 'tokenized' column.")
+        if "class" not in self.df.columns:
+            raise ValueError("DataFrame is missing 'class' column.")
+        self.df.dropna(subset=["tokenized"], inplace=True)
+        self.df = self.df.reset_index(drop=True)
 
-        # ✅ Setup device
+        # Device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.logger.info(f"Using device: {self.device}")
 
-        # ✅ Initialize tokenizer
-        self.logger.info("Loading BERT tokenizer...")
+        # Tokenizer
+        self.logger.info("Loading BERT tokenizer (prajjwal1/bert-tiny)...")
         self.tokenizer = AutoTokenizer.from_pretrained("prajjwal1/bert-tiny")
 
-        # ✅ DataCollator handles dynamic padding
+        # DataCollator
         self.data_collator = DataCollatorWithPadding(tokenizer=self.tokenizer)
-        self.model = None
 
-    def train(self, texts: List[str], labels: np.ndarray) -> Tuple[List[Dict], Dict, Dict, Any, Any]:
+    def train(
+        self, 
+        texts: List[str], 
+        labels: np.ndarray
+    ) -> Tuple[List[Dict], Dict, Dict, Any, Any]:
         """
-        Override the generic train method.
-        
-        For the BERTClassifier we already have a custom training routine that
-        loads the tokenized data once and uses index-based cross-validation.
-        This override ensures that when the pipeline calls train(), it uses the
-        BERT-specific training routine rather than the generic one (which expects
-        raw texts and labels).
-        
-        Returns:
-            Tuple containing:
-            - A list of cross-validation metrics (dummy placeholder here),
-            - A dictionary of final test metrics (dummy placeholder),
-            - A dictionary representing the best configuration (dummy placeholder),
-            - Final test labels (dummy placeholder),
-            - Final test probabilities (dummy placeholder).
+        1) train_test_split(80-20)
+        2) StratifiedKFold on that 80%
+        3) best config
+        4) final training on 80%
+        5) evaluate on 20%
         """
-        # Call the BERT-specific training routine.
-        self.train_model()
-        
-        # In your current BERT code, you are not returning CV metrics or final evaluation results.
-        # You can either extend your train_model() and train_final_model() methods to compute these
-        # or, if you do not need them, return placeholder values.
-        cv_metrics = []      # Replace with actual CV metrics if available.
-        best_config = {}     # Replace with the best configuration if computed.
-        test_metrics = {}    # Replace with final test metrics if final evaluation is performed.
-        final_labels = None  # Replace with the final test labels if computed.
-        final_probs = None   # Replace with the final test probabilities if computed.
-        
-        return cv_metrics, test_metrics, best_config, final_labels, final_probs
-
-
-    def train_model(self):
-        """
-        Runs cross-validation for training the BERT model.
-
-        This method:
-        - Loads the dataset ONCE
-        - Uses StratifiedKFold to create train/val splits
-        - Calls `train_fold()` with index-based subsets (instead of reloading the dataset)
-        """
-        self.logger.info("Starting cross-validation...")
-
-        # Use the dataset that was passed from main.py
-        dataset = self.dataset  # ✅ Correct: Use preloaded dataset
-
-
-        # ✅ Stratified K-Fold split (preserves class balance)
-        skf = StratifiedKFold(n_splits=self.config.num_iterations, shuffle=True, random_state=self.config.random_state)
-
-        # ✅ Convert labels to numpy array
-        labels = np.array(full_dataset["class"].map({"suicide": 1, "non-suicide": 0}))
-
-        cv_metrics = []
-        cv_configs = []
-
-        # ✅ Loop through each fold
-        for fold, (train_idx, val_idx) in enumerate(skf.split(full_dataset["text"], labels)):
-            self.logger.info(f"\nTraining fold {fold + 1}/{self.config.num_iterations}")
-
-            # ✅ Call train_fold with index-based subsets
-            model, fold_metrics, fold_config = self.train_fold(
-                dataset, train_idx, val_idx, fold
-            )
-
-            # ✅ Store fold results
-            cv_metrics.append(fold_metrics)
-            cv_configs.append(fold_config)
-
-        self.logger.info("✅ Cross-validation complete. Saving results.")
-
-    def train_fold(self, dataset, train_idx, val_idx, fold: int) -> Tuple[Any, Dict, Dict]:
-        """
-        Train model on a single fold using the provided train/val sets.
-
-        Returns:
-            (model, metrics, training_args)
-        """
-        self.logger.info(f"Training fold {fold + 1}")
-        self.logger.info("Using distinct train/val subsets for real cross-validation.")
-
         try:
-            # ✅ Subset dataset using provided indices
-            train_subset = Subset(dataset, train_idx)
-            val_subset = Subset(dataset, val_idx)
+            self.logger.info("Starting model training pipeline...")
 
-            # -------------------------------------------------
-            # ✅ Validate tokenized data before training
-            # -------------------------------------------------
-            for idx in train_idx[:5]:  # Check a few samples to catch potential issues early
-                record = dataset[idx]
-                if not isinstance(record, dict) or "input_ids" not in record or "attention_mask" not in record:
-                    raise ValueError(f"Invalid tokenized format at index {idx}: {record}")
+            # 1. train_test_split
+            self.logger.info("Performing initial train-test split...")
+            X_train, X_test, y_train, y_test = train_test_split(
+                texts, 
+                labels,
+                test_size=1 - self.config.train_size,
+                stratify=labels,
+                random_state=self.config.random_state
+            )
+            self.log_data_split(X_train, X_test, y_train, y_test)
 
-            self.logger.info(f"✅ Tokenized data successfully validated for fold {fold + 1}")
-
-            # -------------------------------------------------
-            # ✅ Load Pretrained BERT Model for Classification
-            # -------------------------------------------------
-            model = AutoModelForSequenceClassification.from_pretrained(
-                "prajjwal1/bert-tiny",
-                num_labels=2  # Ensure model initializes classification head properly
-            ).to(self.device)
-
-            # -------------------------------------------------
-            # ✅ Define Training Output Directory
-            # -------------------------------------------------
-            output_dir = os.path.join(self.models_dir, f"fold_{fold}_{self.timestamp}")
-            os.makedirs(output_dir, exist_ok=True)
-
-            # -------------------------------------------------
-            # ✅ Define TrainingArguments for Hugging Face Trainer
-            # -------------------------------------------------
-            training_args = TrainingArguments(
-                output_dir=output_dir,        # Save model checkpoints here
-                learning_rate=3e-5,           # Learning rate for optimizer
-                per_device_train_batch_size=16,  # Training batch size
-                per_device_eval_batch_size=16,   # Evaluation batch size
-                num_train_epochs=self.config.epochs,  # Number of training epochs
-                weight_decay=0.01,             # Regularization to prevent overfitting
-                evaluation_strategy="epoch",   # Evaluate at the end of each epoch
-                save_strategy="no",            # No intermediate model saving
-                logging_dir=f"{self.config.output_dir}/logs",  # Logging directory
-                logging_steps=1000,            # Log every 1000 steps
-                gradient_accumulation_steps=2, # Accumulate gradients to avoid out-of-memory issues
-                fp16=False,                    # Disable mixed precision for stability
-                max_grad_norm=1.0,              # Gradient clipping
+            # 2. K-fold CV
+            cv_metrics = []
+            cv_configs = []
+            skf = StratifiedKFold(
+                n_splits=self.config.num_iterations,
+                shuffle=True,
+                random_state=self.config.random_state
             )
 
-            # -------------------------------------------------
-            # ✅ Initialize Trainer
-            # -------------------------------------------------
-            trainer = Trainer(
-                model=model,         # Model instance
-                args=training_args,  # Training configuration
-                train_dataset=train_subset,  # ✅ Use defined subset
-                eval_dataset=val_subset,    # ✅ Use defined subset
-                data_collator=self.data_collator, # Handles batch padding dynamically
-                compute_metrics=self.compute_metrics # Function to compute performance metrics
-            )
+            # 3. cross-validation
+            self.logger.info("Starting cross-validation...")
+            for fold, (train_idx, val_idx) in enumerate(skf.split(X_train, y_train)):
+                self.logger.info(f"\nTraining fold {fold+1}/{self.config.num_iterations}")
 
-            # -------------------------------------------------
-            # ✅ Train and Evaluate Model
-            # -------------------------------------------------
-            trainer.train()  # Train model
-            eval_metrics = trainer.evaluate()  # Evaluate on validation set
+                # handle list or np.array
+                if isinstance(X_train, (pd.DataFrame, pd.Series)):
+                    fold_X_train = [X_train.iloc[i] for i in train_idx]
+                    fold_y_train = y_train.iloc[train_idx]
+                    fold_X_val   = [X_train.iloc[i] for i in val_idx]
+                    fold_y_val   = y_train.iloc[val_idx]
+                elif isinstance(X_train, (list, np.ndarray)):
+                    if isinstance(X_train, np.ndarray):
+                        X_train_list = X_train.tolist()
+                    else:
+                        X_train_list = X_train
+                    fold_X_train = [X_train_list[i] for i in train_idx]
+                    fold_y_train = y_train[train_idx]
+                    fold_X_val   = [X_train_list[i] for i in val_idx]
+                    fold_y_val   = y_train[val_idx]
+                else:
+                    raise ValueError("Unsupported data type for X_train and y_train")
 
-            # ✅ Process evaluation metrics
-            # ✅ Convert NumPy arrays to lists before saving JSON
-            cleaned_metrics = {k.replace("eval_", ""): float(v) for k, v in eval_metrics.items()}
-            for key, value in cleaned_metrics.items():
-                if isinstance(value, np.ndarray):
-                    cleaned_metrics[key] = value.tolist()  # ✅ Convert to list before saving
+                self.logger.debug(f"Fold {fold} sizes - Train: {len(fold_X_train)}, Val: {len(fold_X_val)}")
 
-            # ✅ Save fold metrics to JSON file
-            metrics_file = os.path.join(self.logs_dir, f"metrics_fold_{fold}.json")
-            with open(metrics_file, "w") as f:
-                json.dump(cleaned_metrics, f, indent=4)
+                # train fold
+                fold_model, fold_metrics_dict, fold_config = self.train_fold(
+                    fold_X_train, 
+                    fold_y_train,
+                    fold_X_val, 
+                    fold_y_val,
+                    fold
+                )
+                fold_metrics_dict["fold"] = fold
+                cv_metrics.append(fold_metrics_dict)
+                cv_configs.append(fold_config)
 
-            self.logger.info(f"Metrics for fold {fold + 1} saved to {metrics_file}")
+                self.logger.info(f"Fold {fold} metrics: {fold_metrics_dict}")
 
-            # -------------------------------------------------
-            # ✅ Return trained model, metrics, and arguments
-            # -------------------------------------------------
-            return model, cleaned_metrics, training_args.to_dict()
+            # 4. pick best fold
+            best_fold_idx = np.argmax([m["f1"] for m in cv_metrics])
+            best_config = cv_configs[best_fold_idx]
+            self.logger.info(f"Best configuration from fold {best_fold_idx + 1}: {best_config}")
 
-        except ValueError as e:
-            # ❌ Log issues related to tokenized data
-            self.logger.error(f"❌ Tokenization issue in fold {fold}: {str(e)}")
-            raise
+            # 5. final train on entire 80%
+            self.logger.info("Training final model on full training set...")
+            final_model = self.train_final_model(X_train, y_train, best_config)
+
+            # 6. evaluate on the 20% test
+            self.logger.info("Evaluating on held-out test set...")
+            test_metrics, final_labels, final_probs = self.evaluate_model(final_model, X_test, y_test)
+            self.logger.info(f"Final test metrics: {test_metrics}")
+
+            # aggregate
+            mean_cv_metrics, std_cv_metrics = self.calculate_aggregate_metrics(cv_metrics)
+            self.save_fold_results(cv_metrics, f"{self.__class__.__name__}_cv")
+            self.save_metrics(test_metrics, f"{self.__class__.__name__}_test")
+            self.save_metrics(mean_cv_metrics, f"{self.__class__.__name__}_cv_mean")
+            self.save_metrics(std_cv_metrics, f"{self.__class__.__name__}_cv_std")
+
+            self.logger.info("Training pipeline completed successfully!")
+            return cv_metrics, test_metrics, best_config, final_labels, final_probs
 
         except Exception as e:
-            # ❌ Log any errors that occur during training
-            self.logger.error(f"Error in fold {fold} training: {str(e)}")
+            self.logger.error(f"Error in training pipeline: {str(e)}")
             raise
 
-        finally:
-            # -------------------------------------------------
-            # ✅ Cleanup: Free GPU Memory After Each Fold
-            # -------------------------------------------------
-            del model, trainer  # Delete model and trainer instance
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()  # Free GPU memory
-            gc.collect()  # Run garbage collection to free CPU memory
-            self.logger.info("✅ Cleared GPU memory after fold.")
-
-
-    def save_model(self, model, prefix="final_model"):
-        """Save the trained model"""
-        model_dir = os.path.join(self.models_dir, f"{prefix}_{self.timestamp}")
-        os.makedirs(model_dir, exist_ok=True)
-        model.save_pretrained(model_dir)
-        self.logger.info(f"Model saved to {model_dir}")
-
-
-    def save_model(self, model, prefix="final_model"):
+    def train_fold(
+        self,
+        X_train_list: List[Any],
+        y_train_arr: np.ndarray,
+        X_val_list: List[Any],
+        y_val_arr: np.ndarray,
+        fold: int
+    ) -> Tuple[Any, Dict, Dict]:
         """
-        Save the trained model
+        Actually train on a single fold. Create TokenizedSubset from our stored self.df
+        using row indices from X_train_list, X_val_list (which are numeric indices).
         """
-        model_dir = os.path.join(self.models_dir, f"{prefix}_{self.timestamp}")
-        os.makedirs(model_dir, exist_ok=True)
-        model.save_pretrained(model_dir)
-        self.logger.info(f"Model saved to {model_dir}")
-        
+        self.logger.info(f"train_fold: Creating TokenizedSubset for fold {fold}...")
+
+        # build dataset subsets
+        train_subset = TokenizedSubset(self.df, X_train_list)
+        val_subset   = TokenizedSubset(self.df, X_val_list)
+
+        # Initialize BERT model
+        model = AutoModelForSequenceClassification.from_pretrained(
+            "prajjwal1/bert-tiny", num_labels=2
+        ).to(self.device)
+
+        # Output dir for this fold
+        fold_dir = os.path.join(self.cv_dir, f"fold_{fold}")
+        os.makedirs(fold_dir, exist_ok=True)
+
+        training_args = TrainingArguments(
+            output_dir=fold_dir,
+            learning_rate=self.config.learning_rate,
+            per_device_train_batch_size=self.config.batch_size,
+            per_device_eval_batch_size=self.config.batch_size,
+            num_train_epochs=self.config.epochs,
+            evaluation_strategy="epoch",
+            save_strategy="no",
+            logging_dir=os.path.join(fold_dir, "logs"),
+            logging_steps=50,
+            gradient_accumulation_steps=1,
+            fp16=False,
+            disable_tqdm=False
+        )
+
+        trainer = Trainer(
+            model=model,
+            args=training_args,
+            train_dataset=train_subset,
+            eval_dataset=val_subset,
+            data_collator=self.data_collator,
+            compute_metrics=self.compute_metrics
+        )
+
+        trainer.train()
+        eval_metrics = trainer.evaluate()
+
+        # parse metrics
+        fold_metrics = {}
+        for k, v in eval_metrics.items():
+            if k.startswith("eval_"):
+                fold_metrics[k.replace("eval_", "")] = float(v)
+            else:
+                fold_metrics[k] = float(v)
+
+        self.logger.info(f"Fold {fold} -> metrics: {fold_metrics}")
+
+        # example fold config
+        fold_config = {
+            "learning_rate": self.config.learning_rate,
+            "batch_size": self.config.batch_size,
+            "epochs": self.config.epochs
+        }
+
+        return model, fold_metrics, fold_config
+
     def train_final_model(
-        self, 
-        X_train: List[str],
-        y_train: np.ndarray,
+        self,
+        X_train_idx: List[int],
+        y_train_idx: np.ndarray,
         config: Dict
     ) -> Any:
         """
-        Train final model on entire training set (optional).
-        If your data is already fully tokenized in full_df, we can just reuse that.
+        Train final on entire 80% subset (indices in X_train_idx).
         """
-        self.logger.info("Training final model on complete training set.")
-        self.logger.info(f"Training set size: {len(X_train)}")
-        self.logger.info(f"Using config: {config}")
+        self.logger.info("Training final BERT model on full training subset.")
+        final_dir = os.path.join(self.final_dir, f"model_{self.timestamp}")
+        os.makedirs(final_dir, exist_ok=True)
 
-        try:
-            # Just reuse the single loaded DataFrame if you want all data
-            final_dataset = TextDataset(full_dataset)
+        train_subset = TokenizedSubset(self.df, X_train_idx)
 
-            model = AutoModelForSequenceClassification.from_pretrained(
-                "prajjwal1/bert-tiny", num_labels=2
-            ).to(self.device)
+        model = AutoModelForSequenceClassification.from_pretrained(
+            "prajjwal1/bert-tiny", num_labels=2
+        ).to(self.device)
 
-            training_args = TrainingArguments(
-                output_dir=f"{self.config.output_dir}/bert_final_{self.timestamp}",
-                learning_rate=config["learning_rate"],
-                per_device_train_batch_size=config["per_device_train_batch_size"],
-                num_train_epochs=config["num_train_epochs"],
-                weight_decay=config["weight_decay"],
-                save_strategy="epoch",
-                logging_dir=f"{self.config.output_dir}/logs_final_{self.timestamp}",
-                logging_steps=10
-            )
+        training_args = TrainingArguments(
+            output_dir=final_dir,
+            learning_rate=config["learning_rate"],
+            per_device_train_batch_size=config["batch_size"],
+            num_train_epochs=config["epochs"],
+            evaluation_strategy="no",
+            save_strategy="epoch",
+            logging_dir=os.path.join(final_dir, "logs_final"),
+            logging_steps=50
+        )
 
-            trainer = Trainer(
-                model=model,
-                args=training_args,
-                train_dataset=final_dataset,
-                data_collator=self.data_collator
-            )
+        trainer = Trainer(
+            model=model,
+            args=training_args,
+            train_dataset=train_subset,
+            data_collator=self.data_collator
+        )
 
-            trainer.train()
+        trainer.train()
 
-        except Exception as e:
-            self.logger.error(f"Error in final model training: {str(e)}")
-            raise
+        model.save_pretrained(os.path.join(final_dir, "checkpoint"))
+        self.logger.info(f"Final model saved in {final_dir}")
+        return model
 
-        finally:
-            del model, trainer, final_dataset
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
-        return None  # or return model if you prefer
-    
     def evaluate_model(
-        self, 
-        model: AutoModelForSequenceClassification,
-        X_test: List[Any],
-        y_test: Any,
-        file_path: str = None
+        self,
+        model: Any,
+        X_test_idx: List[int],
+        y_test_idx: np.ndarray
     ) -> Tuple[Dict, np.ndarray, np.ndarray]:
         """
-        Evaluate model on a test set.
-        
-        Returns:
-            Tuple[Dict, np.ndarray, np.ndarray]: 
-                - A dictionary of evaluation metrics.
-                - An array of ground-truth labels.
-                - An array of probabilities for the positive class.
+        Evaluate on the parent's 20% test set. Indices X_test_idx, numeric labels y_test_idx.
+        We'll build a TokenizedSubset with those row indices and run HF Trainer.predict.
         """
-        self.logger.info("Evaluating model on test set...")
+        self.logger.info("Evaluating final BERT model on test set...")
+        test_subset = TokenizedSubset(self.df, X_test_idx)
 
-        if file_path is None:
-            file_path = "../data/tokenized/tokenized_data.pkl"
+        trainer = Trainer(
+            model=model,
+            data_collator=self.data_collator,
+            compute_metrics=self.compute_metrics
+        )
 
-        try:
-            test_df = pd.read_pickle(file_path)
-            test_dataset = TextDataset(test_df)
+        preds_output = trainer.predict(test_subset)
+        logits = preds_output.predictions  
+        label_ids = preds_output.label_ids  
 
-            trainer = Trainer(
-                model=model,
-                data_collator=self.data_collator,
-                compute_metrics=self.compute_metrics
-            )
+        probs = softmax(logits, axis=1)[:, 1]
 
-            predictions = trainer.predict(test_dataset)
-            logits = predictions.predictions    # shape (N, 2)
-            label_ids = predictions.label_ids   # ground-truth labels as 0/1
+        raw_metrics = self.compute_metrics((logits, label_ids))
+        test_metrics = {k: float(v) for k, v in raw_metrics.items()}
 
-            # Convert logits -> probabilities for the positive class (index=1)
-            probs = softmax(logits, axis=1)[:, 1]
+        self.logger.info(f"Final test metrics: {test_metrics}")
+        return test_metrics, label_ids, probs
 
-            metrics = self.compute_metrics(predictions)
-            cleaned = {k: float(v) for k, v in metrics.items()}
-            self.logger.info(f"Evaluation metrics: {cleaned}")
-
-            # Save predictions to CSV
-            pred_labels = np.argmax(logits, axis=1)
-            df_out = pd.DataFrame({
-                'prediction': pred_labels,
-                'actual': label_ids,
-                'probability': probs
-            })
-            df_out.to_csv(
-                f"{self.config.output_dir}/bert_test_predictions_{self.timestamp}.csv",
-                index=False
-            )
-            return cleaned, label_ids, probs
-
-        except Exception as e:
-            self.logger.error(f"Error during evaluation: {str(e)}")
-            raise
-
-    def compute_metrics(self, eval_pred: Tuple[np.ndarray, np.ndarray]) -> Dict:
+    def compute_metrics(self, eval_pred: Tuple[np.ndarray, np.ndarray]) -> Dict[str, float]:
         """
-        Compute evaluation metrics from the model predictions.
-        
-        Args:
-            eval_pred (Tuple[np.ndarray, np.ndarray]): A tuple containing:
-                - logits: Model output logits.
-                - labels: Ground truth labels.
-                
-        Returns:
-            Dict: A dictionary with evaluation metrics.
+        Standard classification metrics: accuracy, precision, recall, F1, roc_auc
         """
         logits, labels = eval_pred
-        predictions = np.argmax(logits, axis=-1)
-        
-        # Compute metrics using sklearn
-        accuracy = accuracy_score(labels, predictions)
-        precision = precision_score(labels, predictions, pos_label=1)
-        recall = recall_score(labels, predictions, pos_label=1)
-        f1 = f1_score(labels, predictions, pos_label=1)
-        # Compute ROC AUC (ensure labels are binary integers 0 and 1)
-        # Use softmax to convert logits to probabilities for the positive class
-        probs = softmax(logits, axis=1)[:, 1]
-        roc_auc = roc_auc_score(labels, probs)
-        
-        return {
-            "accuracy": accuracy,
-            "precision": precision,
-            "recall": recall,
-            "f1": f1,
-            "roc_auc": roc_auc
-        }
+        preds = np.argmax(logits, axis=-1)
 
+        acc = accuracy_score(labels, preds)
+        prec = precision_score(labels, preds, pos_label=1)
+        rec = recall_score(labels, preds, pos_label=1)
+        f1_ = f1_score(labels, preds, pos_label=1)
+        probs = softmax(logits, axis=1)[:, 1]
+        roc = roc_auc_score(labels, probs)
+
+        return {
+            "accuracy": acc,
+            "precision": prec,
+            "recall": rec,
+            "f1": f1_,
+            "roc_auc": roc
+        }

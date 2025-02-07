@@ -6,7 +6,7 @@ from transformers import (
     DataCollatorWithPadding
 )
 import torch
-from torch.utils.data import Dataset, Subset
+from torch.utils.data import Dataset
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Tuple, Any
@@ -15,8 +15,6 @@ import os
 import gc
 import json
 from scipy.special import softmax
-
-# Make sure these are present:
 from sklearn.model_selection import train_test_split, StratifiedKFold
 
 from base_classes import BaseClassifier, ModelConfig
@@ -49,6 +47,7 @@ class TokenizedSubset(Dataset):
             "attention_mask": torch.tensor(token_dict["attention_mask"], dtype=torch.long),
             "labels": torch.tensor(label, dtype=torch.long)
         }
+        # Some tokenizers also have 'token_type_ids'
         if "token_type_ids" in token_dict and token_dict["token_type_ids"] is not None:
             item["token_type_ids"] = torch.tensor(token_dict["token_type_ids"], dtype=torch.long)
 
@@ -62,8 +61,14 @@ class BERTClassifier(BaseClassifier):
       - A pre-tokenized DataFrame with columns ["tokenized", "class"].
     """
 
-    def __init__(self, config: ModelConfig, df: pd.DataFrame):
-        super().__init__(config)
+    def __init__(self, config: ModelConfig, clf_dirs: dict, df: pd.DataFrame):
+        """
+        Args:
+            config (ModelConfig): Training configuration.
+            clf_dirs (dict): Dictionary of subdirectories (cv, final, etc.) from pipeline.
+            df (pd.DataFrame): Pre-tokenized DataFrame with columns ["tokenized", "class"].
+        """
+        super().__init__(config, clf_dirs)
         self.logger.info("Initializing BERT classifier with pre-tokenized DataFrame...")
 
         self.df = df.reset_index(drop=True)
@@ -125,17 +130,14 @@ class BERTClassifier(BaseClassifier):
             for fold, (train_idx, val_idx) in enumerate(skf.split(X_train, y_train)):
                 self.logger.info(f"\nTraining fold {fold+1}/{self.config.num_iterations}")
 
-                # handle list or np.array
+                # Convert to workable lists
                 if isinstance(X_train, (pd.DataFrame, pd.Series)):
                     fold_X_train = [X_train.iloc[i] for i in train_idx]
                     fold_y_train = y_train.iloc[train_idx]
                     fold_X_val   = [X_train.iloc[i] for i in val_idx]
                     fold_y_val   = y_train.iloc[val_idx]
                 elif isinstance(X_train, (list, np.ndarray)):
-                    if isinstance(X_train, np.ndarray):
-                        X_train_list = X_train.tolist()
-                    else:
-                        X_train_list = X_train
+                    X_train_list = X_train.tolist() if isinstance(X_train, np.ndarray) else X_train
                     fold_X_train = [X_train_list[i] for i in train_idx]
                     fold_y_train = y_train[train_idx]
                     fold_X_val   = [X_train_list[i] for i in val_idx]
@@ -197,11 +199,11 @@ class BERTClassifier(BaseClassifier):
     ) -> Tuple[Any, Dict, Dict]:
         """
         Actually train on a single fold. Create TokenizedSubset from our stored self.df
-        using row indices from X_train_list, X_val_list (which are numeric indices).
+        using row indices from X_train_list, X_val_list (numeric indices).
         """
         self.logger.info(f"train_fold: Creating TokenizedSubset for fold {fold}...")
 
-        # build dataset subsets
+        # Build dataset subsets
         train_subset = TokenizedSubset(self.df, X_train_list)
         val_subset   = TokenizedSubset(self.df, X_val_list)
 
@@ -210,8 +212,8 @@ class BERTClassifier(BaseClassifier):
             "prajjwal1/bert-tiny", num_labels=2
         ).to(self.device)
 
-        # Output dir for this fold
-        fold_dir = os.path.join(self.cv_dir, f"fold_{fold}")
+        # Output dir for this fold inside the "cv" folder
+        fold_dir = os.path.join(self.clf_dirs["cv"], f"fold_{fold}")
         os.makedirs(fold_dir, exist_ok=True)
 
         training_args = TrainingArguments(
@@ -270,7 +272,9 @@ class BERTClassifier(BaseClassifier):
         Train final on entire 80% subset (indices in X_train_idx).
         """
         self.logger.info("Training final BERT model on full training subset.")
-        final_dir = os.path.join(self.final_dir, f"model_{self.timestamp}")
+
+        # Create final subfolder for the model
+        final_dir = os.path.join(self.clf_dirs["final"], f"model_{self.timestamp}")
         os.makedirs(final_dir, exist_ok=True)
 
         train_subset = TokenizedSubset(self.df, X_train_idx)
@@ -299,8 +303,10 @@ class BERTClassifier(BaseClassifier):
 
         trainer.train()
 
-        model.save_pretrained(os.path.join(final_dir, "checkpoint"))
-        self.logger.info(f"Final model saved in {final_dir}")
+        # Save final checkpoint
+        checkpoint_path = os.path.join(final_dir, "checkpoint")
+        model.save_pretrained(checkpoint_path)
+        self.logger.info(f"Final model saved in {checkpoint_path}")
         return model
 
     def evaluate_model(
@@ -336,7 +342,7 @@ class BERTClassifier(BaseClassifier):
 
     def compute_metrics(self, eval_pred: Tuple[np.ndarray, np.ndarray]) -> Dict[str, float]:
         """
-        Standard classification metrics: accuracy, precision, recall, F1, roc_auc
+        Standard classification metrics: accuracy, precision, recall, F1, roc_auc.
         """
         logits, labels = eval_pred
         preds = np.argmax(logits, axis=-1)

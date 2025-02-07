@@ -16,8 +16,9 @@ from openai import OpenAIError
 load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
 
-# ✅ Initialize OpenAI client with API key
+# Initialize OpenAI client
 client = openai.OpenAI(api_key=api_key)
+
 
 class FewShotClassifier(BaseClassifier):
     """
@@ -27,14 +28,18 @@ class FewShotClassifier(BaseClassifier):
     Uses parallel processing, caching for efficiency,
     and a retry mechanism for API rate limits.
     
-    NOTE: Only 10% of the full dataset will be used.
-          This 10% subset is split into 80% training (used solely as a reference)
-          and 20% validation, on which inference is performed.
-          Logging messages throughout clarify that this is an inference-only process.
+    NOTE: Only 10% of the full dataset is used.
+          That 10% subset is split into 80% 'training' (reference only)
+          and 20% 'validation' (for inference).
     """
     
-    def __init__(self, config):
-        super().__init__(config)
+    def __init__(self, config: ModelConfig, clf_dirs: dict):
+        """
+        Args:
+            config (ModelConfig): Training configuration
+            clf_dirs (dict): Dictionary of subdirectories (cv, final, etc.) from pipeline
+        """
+        super().__init__(config, clf_dirs)
         self.logger.info("Initializing Few-Shot classifier...")
         
         # Check for API key
@@ -55,45 +60,45 @@ class FewShotClassifier(BaseClassifier):
         # Setup prompt templates
         self.setup_prompt_templates()
 
-    def prepare_data(self, X: List[str], y: np.ndarray, random_state: int = 42) -> Tuple[List[str], np.ndarray, List[str], np.ndarray]:
+    def prepare_data(
+        self, 
+        X: List[str], 
+        y: np.ndarray, 
+        random_state: int = 42
+    ) -> Tuple[List[str], np.ndarray, List[str], np.ndarray]:
         """
-        Use the dataset as provided (already preprocessed to 10%).
-        Only perform the 80% training (reference only) and 20% validation (inference) split.
-
-        Args:
-            X: List of text samples.
-            y: Corresponding labels.
-            random_state: Seed for reproducibility.
-
-        Returns:
-            X_train, y_train, X_val, y_val
+        Split 10% dataset into 80% reference (train) and 20% validation (inference).
         """
-        self.logger.info("Splitting dataset into 80% training (reference) and 20% validation (for inference).")
-
+        self.logger.info("Splitting dataset into 80% training (reference) and 20% validation (inference).")
         from sklearn.model_selection import train_test_split
+
         X_train, X_val, y_train, y_val = train_test_split(
             X, y, train_size=0.8, random_state=random_state
         )
 
-        self.logger.info(f"Data split complete: {len(X_train)} training samples (reference), {len(X_val)} validation samples (for inference).")
+        self.logger.info(f"Data split: {len(X_train)} training (reference), {len(X_val)} validation.")
         return X_train, y_train, X_val, y_val
 
-
     def save_results(self, results, prefix="results"):
-        results_file = os.path.join(self.final_dir, f"{prefix}_{self.timestamp}.json")
+        """
+        Save final results in a JSON file inside 'final' subdir.
+        """
+        results_file = os.path.join(
+            self.clf_dirs["final"], 
+            f"{prefix}_{self.timestamp}.json"
+        )
         with open(results_file, "w") as f:
             json.dump(results, f, indent=4)
         self.logger.info(f"Results saved to {results_file}")
         
     def setup_prompt_templates(self):
-        """Setup the few-shot prompt templates using langchain"""
+        """Set up the few-shot prompt templates using langchain."""
         self.logger.info("Setting up prompt templates...")
         
         example_template = """
         Text: {text}
         Label: {label}
         """
-        
         example_prompt = PromptTemplate(
             input_variables=["text", "label"],
             template=example_template
@@ -113,9 +118,11 @@ class FewShotClassifier(BaseClassifier):
         )
         self.logger.info("Prompt templates setup complete")
     
-    @lru_cache(maxsize=50000)  # Cache calls to avoid redundant GPT queries
+    @lru_cache(maxsize=50000)
     def classify_text_cached(self, text: str) -> str:
-        """Classify a single text using GPT with caching."""
+        """
+        Classify a single text using GPT with caching (to avoid repeated API calls).
+        """
         prompt = self.few_shot_prompt.format(input=text)
         try:
             response = client.chat.completions.create(
@@ -140,7 +147,9 @@ class FewShotClassifier(BaseClassifier):
             return "unclassified"
 
     def classify_text_with_retries(self, text: str, max_retries: int = 5) -> str:
-        """Classify text with a retry mechanism for handling errors/rate limits."""
+        """
+        Classify text with a retry mechanism (exponential backoff) for rate limits / errors.
+        """
         retries = 0
         base_wait_time = 8
         max_wait_time = 64
@@ -152,24 +161,23 @@ class FewShotClassifier(BaseClassifier):
                 error_message = str(e)
                 retries += 1
                 
-                # Different error handling
                 if "insufficient_quota" in error_message:
                     self.logger.error("API quota exceeded")
                     return "unclassified"
-                    
+
                 if "rate_limit" in error_message:
                     wait_time = base_wait_time * (2 ** retries)
+                    # If error message has "try again in Xs." we can parse that
                     if "try again in" in error_message.lower():
                         try:
                             wait_str = error_message.split("try again in")[1].split("s.")[0]
-                            wait_time = float(wait_str.strip()) + 1  # Add buffer
+                            wait_time = float(wait_str.strip()) + 1
                         except:
                             pass
                     wait_time = min(wait_time, max_wait_time)
                     
                     self.logger.warning(
-                        f"Rate limit reached. Retry {retries}/{max_retries}. "
-                        f"Waiting {wait_time:.2f} seconds..."
+                        f"Rate limit reached. Retry {retries}/{max_retries}. Waiting {wait_time:.2f}s..."
                     )
                     time.sleep(wait_time)
                 else:
@@ -178,23 +186,22 @@ class FewShotClassifier(BaseClassifier):
                         return "unclassified"
                     time.sleep(base_wait_time)
                     
-        return "unclassified"  # Return unclassified after all retries exhausted
-    
+        return "unclassified"
+
     def classify_batch(self, texts: List[str]) -> List[str]:
         """
-        Classify a batch of texts in parallel, with chunking and rate-limit handling.
+        Classify a batch of texts in parallel threads, chunked to avoid rate limits.
         """
         self.logger.info(f"Processing batch of {len(texts)} texts")
         results = []
-        num_threads = 2
-        batch_size = 20
+        num_threads = min(10, os.cpu_count())  
+        batch_size = 50
         
         for i in range(0, len(texts), batch_size):
             batch = texts[i : i + batch_size]
-            self.logger.info(
-                f"Processing batch {i // batch_size + 1}/{len(texts) // batch_size + 1}"
-            )
+            self.logger.info(f"Processing batch {i // batch_size + 1}/{(len(texts) // batch_size) + 1}")
             
+            import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
                 future_to_index = {
                     executor.submit(self.classify_text_with_retries, text): idx + i
@@ -207,20 +214,18 @@ class FewShotClassifier(BaseClassifier):
                         label = future.result()
                         results.append((index, label))
                     except Exception as e:
-                        self.logger.error(
-                            f"Failed to classify text at index {index}: {str(e)}"
-                        )
+                        self.logger.error(f"Failed to classify text at index {index}: {str(e)}")
                         results.append((index, "unclassified"))
                     
                     # Periodic logging
                     if len(results) % 10 == 0:
                         self.logger.info(f"Processed {len(results)}/{len(texts)} texts")
             
-            # Delay between batches to avoid hitting rate limits too quickly
+            # Small delay between batches
             if i + batch_size < len(texts):
                 time.sleep(5)
         
-        # Return labels in the original order
+        # Sort by original index so outputs line up with inputs
         return [label for _, label in sorted(results, key=lambda x: x[0])]
 
     def train_fold(
@@ -232,54 +237,55 @@ class FewShotClassifier(BaseClassifier):
         fold: int
     ) -> Tuple[Any, Dict, Dict]:
         """
-        Evaluate one fold.
+        Evaluate one cross-validation fold in few-shot mode.
         
-        Note: In few-shot learning, the training portion is used only as a reference.
-              All classification (i.e., inference) is performed on the validation set.
-        Returns:
-            (model, metrics, config) -> (None, metrics_dict, config_dict)
+        Because it's few-shot, we basically do no training:
+        we only classify the validation set using GPT.
         """
         self.logger.info(f"Evaluating fold {fold+1}")
-        self.logger.info("Few-shot learning mode: Only 10% of the dataset is used. The training set is for reference only; inference is performed solely on the validation set.")
+        self.logger.info(
+            "Few-shot: 80% of the (10%) dataset is reference, inference on 20% validation."
+        )
         self.logger.info(f"Validation set size: {len(X_val)}")
         
-        # Classify validation texts (running inference only)
+        # Classify the validation texts
         val_preds = self.classify_batch(X_val)
         val_preds = np.array(val_preds)
 
-        # Filter out anything that's not 'suicide'/'non-suicide'
+        # Clean up unexpected labels
         valid_labels = {"suicide", "non-suicide"}
         val_preds = np.array([
-            label if label in valid_labels else "non-suicide" 
+            label if label in valid_labels else "non-suicide"
             for label in val_preds
         ])
 
-        # Convert 'suicide'/'non-suicide' → probabilities
+        # Convert predictions to probabilities (1 for suicide, 0 otherwise)
         val_probs = (val_preds == 'suicide').astype(float)
 
-        # If y_val is numeric (0/1), we convert it back to text
+        # If y_val is numeric, convert it to text
         if isinstance(y_val[0], (int, np.integer)):
-            y_val = np.array(['suicide' if label == 1 else 'non-suicide' for label in y_val])
+            y_val = np.array([
+                'suicide' if label == 1 else 'non-suicide'
+                for label in y_val
+            ])
 
-        # Calculate metrics
-        metrics = {
+        # Compute metrics
+        metrics_dict = {
             'accuracy':  accuracy_score(y_val, val_preds),
             'precision': precision_score(y_val, val_preds, pos_label='suicide'),
             'recall':    recall_score(y_val, val_preds, pos_label='suicide'),
             'f1':        f1_score(y_val, val_preds, pos_label='suicide'),
             'roc_auc':   roc_auc_score((y_val == 'suicide').astype(int), val_probs)
         }
+        self.logger.info(f"Fold {fold+1} metrics: {metrics_dict}")
         
-        self.logger.info(f"Fold {fold+1} metrics: {metrics}")
-        
-        # For record-keeping, store the prompt examples and configuration
+        # "model" is None, as there's no actual training
         config = {
             'examples': self.examples,
             'prompt_template': str(self.few_shot_prompt),
             'fold': fold
         }
-        
-        return None, metrics, config
+        return None, metrics_dict, config
         
     def train_final_model(
         self,
@@ -288,12 +294,10 @@ class FewShotClassifier(BaseClassifier):
         config: Dict
     ) -> Any:
         """
-        No 'training' step needed for a few-shot approach.
-        The provided training data is only a reference. 
-        
-        This method logs that final training is skipped in favor of inference.
+        No actual final training is needed for few-shot. 
+        We remain in inference mode.
         """
-        self.logger.info("Few-shot classifier doesn't require final training. Running in inference mode only.")
+        self.logger.info("Few-shot classifier does not require final training.")
         return None
         
     def evaluate_model(
@@ -303,53 +307,50 @@ class FewShotClassifier(BaseClassifier):
         y_test: np.ndarray
     ) -> Tuple[Dict, np.ndarray, np.ndarray]:
         """
-        Evaluate model on a test set for binary classification.
-        
-        Returns:
-            Tuple[Dict, np.ndarray, np.ndarray]:
-                - A dictionary of evaluation metrics.
-                - An array of true labels (converted to binary: 1 for 'suicide', 0 otherwise).
-                - An array of predicted probabilities (as floats).
+        Evaluate on a test set for binary classification in few-shot mode.
         """
-        self.logger.info("Evaluating on test set (inference mode)...")
+        self.logger.info("Evaluating in few-shot mode on the test set...")
         self.logger.info(f"Test set size: {len(X_test)}")
         
-        # Classify test texts
+        # Classify test
         test_preds = self.classify_batch(X_test)
         test_preds = np.array(test_preds)
 
-        # Map any unexpected labels to 'non-suicide'
+        # Clean up labels
         valid_labels = {"suicide", "non-suicide"}
         test_preds = np.array([
             label if label in valid_labels else "non-suicide"
             for label in test_preds
         ])
 
-        # If y_test is numeric (0/1), convert it to text
+        # If y_test is numeric, convert to text
         if isinstance(y_test[0], (int, np.integer)):
-            y_test = np.array(['suicide' if label == 1 else 'non-suicide' for label in y_test])
+            y_test = np.array(['suicide' if lbl == 1 else 'non-suicide' for lbl in y_test])
 
-        # Convert predictions to probabilities
+        # Convert to probabilities
         test_probs = (test_preds == 'suicide').astype(float)
 
         try:
-            metrics = {
+            metrics_dict = {
                 'accuracy':  accuracy_score(y_test, test_preds),
                 'precision': precision_score(y_test, test_preds, pos_label='suicide'),
                 'recall':    recall_score(y_test, test_preds, pos_label='suicide'),
                 'f1':        f1_score(y_test, test_preds, pos_label='suicide'),
-                'roc_auc':   roc_auc_score((y_test == "suicide").astype(int), test_probs)
+                'roc_auc':   roc_auc_score((y_test == 'suicide').astype(int), test_probs)
             }
         except ValueError as e:
-            self.logger.error(f"Error computing evaluation metrics: {str(e)}")
+            self.logger.error(f"Error computing metrics: {str(e)}")
             self.logger.error(f"Unique test labels: {np.unique(y_test)}")
             self.logger.error(f"Unique predictions: {np.unique(test_preds)}")
             raise
         
-        self.logger.info(f"Test set metrics: {metrics}")
-        
-        # Save predictions to CSV
-        output_path = f"{self.config.output_dir}/few_shot_test_predictions_{self.timestamp}.csv"
+        self.logger.info(f"Test set metrics: {metrics_dict}")
+
+        # Save predictions to CSV in the 'final' folder
+        output_path = os.path.join(
+            self.clf_dirs["final"], 
+            f"few_shot_test_predictions_{self.timestamp}.csv"
+        )
         pd.DataFrame({
             'text':        X_test,
             'prediction':  test_preds,
@@ -359,22 +360,21 @@ class FewShotClassifier(BaseClassifier):
         
         self.logger.info(f"Predictions saved to {output_path}")
 
+        # Convert y_test to binary for returning
         test_labels_binary = (y_test == "suicide").astype(int)
-        return metrics, test_labels_binary, test_probs
-
+        return metrics_dict, test_labels_binary, test_probs
 
     def predict(self, texts: List[str]) -> List[str]:
         """
-        Make predictions on arbitrary new texts using GPT.
+        Predict on new texts in few-shot mode (GPT).
         """
-        self.logger.info(f"Making predictions on {len(texts)} new texts (inference mode)...")
+        self.logger.info(f"Making predictions on {len(texts)} new texts (few-shot inference).")
         return self.classify_batch(texts)
         
     def predict_proba(self, texts: List[str]) -> np.ndarray:
         """
-        Get predicted probabilities for 'suicide' class on new texts.
+        Get probabilities for 'suicide' class in few-shot mode.
         """
-        self.logger.info(f"Getting prediction probabilities for {len(texts)} texts (inference mode)...")
-        predictions = self.predict(texts)
-        # Convert to 1.0 if suicide, else 0.0
-        return np.array([1.0 if pred == 'suicide' else 0.0 for pred in predictions])
+        self.logger.info(f"Getting probabilities for {len(texts)} texts (few-shot inference).")
+        preds = self.predict(texts)
+        return np.array([1.0 if p == 'suicide' else 0.0 for p in preds])

@@ -10,7 +10,6 @@ from sklearn.model_selection import train_test_split, StratifiedKFold
 import json
 import sys
 
-
 """
 Cross-Validation and Final Model Training Process:
 
@@ -23,28 +22,25 @@ Cross-Validation and Final Model Training Process:
    - The model is trained **5 times**, each time:
      - **4 folds (64% of total data) are used for training.**
      - **1 fold (16% of total data) is used for validation.**
-   - This ensures that every data point is used for **validation once** and **training multiple times**.
+   - This ensures that every data point is used for **validation once** 
+     and **training multiple times**.
 
 3. **Selecting the Best Model from Cross-Validation**
-   - After 5-fold CV, the **best-performing fold** is selected based on metrics like **F1-score, accuracy, precision, recall, and ROC-AUC**.
+   - After 5-fold CV, the **best-performing fold** is selected based on
+     metrics like **F1-score, accuracy, precision, recall, and ROC-AUC**.
    - The **best model configuration** (hyperparameters, training setup) is recorded.
 
 4. **Final Training on the Entire 80% Training Data**
-   - Instead of training on only 4 folds, the **final model is trained using the full 80% training data**.
+   - Instead of training on only 4 folds, the **final model is trained using
+     the full 80% training data**.
    - This **maximizes the available training data** to improve generalization.
 
 5. **Final Model Evaluation on the 20% Test Set**
    - The **final trained model is tested ONCE on the 20% test set**.
    - This provides an **unbiased** estimate of real-world performance.
-   - The test set **was never used in training or validation**, ensuring a **fair evaluation**.
-
-### **Why This Process?**
-✅ Prevents **data leakage** by keeping the test set separate.  
-✅ Ensures **comparability** between different models.  
-✅ Maximizes the **amount of training data** before final evaluation.  
-✅ Provides a **robust estimate** of real-world performance.  
+   - The test set **was never used in training or validation**,
+     ensuring a **fair evaluation**.
 """
-
 
 class ModelType(Enum):
     """Enumeration of supported model types"""
@@ -91,143 +87,102 @@ class ModelConfig:
 
 class BaseClassifier:
     """
-    Base classifier class with common functionality and proper cross-validation
-    
+    Base classifier class with common functionality and proper cross-validation.
+
     Implements best practices for model evaluation:
-    1. Initial train/test split
-    2. K-fold cross-validation on training data
-    3. Final model training on full training set
-    4. Evaluation on held-out test set
+      1. Initial train/test split (80-20)
+      2. K-fold cross-validation on training data
+      3. Final model training on full training set
+      4. Evaluation on held-out test set
     """
     
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: ModelConfig, clf_dirs: dict):
+        """
+        Args:
+            config (ModelConfig): Configuration for model training.
+            clf_dirs (dict): Dictionary of directories for this classifier
+                             (keys = "cv", "final", "visualizations", etc.),
+                             passed from the pipeline.
+        """
         self.config = config
+        self.clf_dirs = clf_dirs
         self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.base_dir = os.path.join(config.output_dir, self.__class__.__name__.replace("Classifier", "").lower())
-        
-        # New Subfolders: logs, cv, final, visualizations
-        self.logs_dir = os.path.join(self.base_dir, "logs")
-        self.cv_dir = os.path.join(self.base_dir, "cv")
-        self.final_dir = os.path.join(self.base_dir, "final")
-        self.visualizations_dir = os.path.join(self.base_dir, "visualizations")
 
-        for directory in [
-            self.logs_dir,
-            self.cv_dir,
-            self.final_dir,
-            self.visualizations_dir
-        ]:
-            os.makedirs(directory, exist_ok=True)
-
-        self.setup_logging()
-
-    def setup_logging(self):
-        """Configure logging for the classifier."""
-        log_file = os.path.join(self.logs_dir, f"{self.__class__.__name__}_{self.timestamp}.log")
-        file_handler = logging.FileHandler(log_file)
-        console_handler = logging.StreamHandler(sys.stdout)
-        
-        formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-        file_handler.setFormatter(formatter)
-        console_handler.setFormatter(formatter)
-        
+        # Setup logger
         self.logger = logging.getLogger(self.__class__.__name__)
         self.logger.setLevel(logging.DEBUG)
-        self.logger.addHandler(file_handler)
-        self.logger.addHandler(console_handler)
+        handler = logging.StreamHandler(sys.stdout)
+        formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+        handler.setFormatter(formatter)
+        self.logger.addHandler(handler)
 
-        self.logger.info(f"Logging initialized. Log file: {log_file}")
-        
-    
+        self.logger.info(f"Initialized {self.__class__.__name__} with directories: {self.clf_dirs}")
+
     def save_config(self):
-        """Save model configuration"""
-        config_file = os.path.join(self.final_dir, f'config_{self.timestamp}.json')
-
+        """Save model configuration as JSON in the 'final' directory."""
+        config_path = os.path.join(self.clf_dirs["final"], f'config_{self.timestamp}.json')
         try:
-            with open(config_file, 'w') as f:
+            with open(config_path, 'w') as f:
                 json.dump(self.config.to_dict(), f, indent=4)
-            self.logger.info(f"Saved configuration to {config_file}")
+            self.logger.info(f"Saved configuration to {config_path}")
         except Exception as e:
             self.logger.error(f"Error saving configuration: {str(e)}")
-        
 
     def convert_numpy(self, obj):
         """
         Convert NumPy and Pandas objects to JSON-serializable formats.
         """
         if isinstance(obj, np.ndarray):
-            return obj.tolist()  # Convert NumPy array to list
-        elif isinstance(obj, np.generic): 
-            return obj.item()  # Convert NumPy scalar to Python int/float
-        elif isinstance(obj, pd.Series): 
-            return obj.tolist()  # Convert Pandas Series to list
-        elif isinstance(obj, pd.DataFrame): 
-            return obj.to_dict(orient="records")  # Convert DataFrame to list of dicts
-        elif isinstance(obj, dict):  # Ensure nested dicts are also converted
+            return obj.tolist()
+        elif isinstance(obj, np.generic):
+            return obj.item()
+        elif isinstance(obj, pd.Series):
+            return obj.tolist()
+        elif isinstance(obj, pd.DataFrame):
+            return obj.to_dict(orient="records")
+        elif isinstance(obj, dict):
             return {k: self.convert_numpy(v) for k, v in obj.items()}
-        elif isinstance(obj, list):  # Ensure lists with NumPy objects are converted
+        elif isinstance(obj, list):
             return [self.convert_numpy(v) for v in obj]
-        return obj  # Return as-is if not a NumPy/Pandas type
-
-
+        return obj
 
     def save_metrics(self, metrics: Dict, prefix: str) -> str:
         """
-        Save evaluation metrics to file, ensuring NumPy arrays are converted.
+        Save evaluation metrics (Dict) to a JSON file in the 'cv' directory.
+        Ensures NumPy arrays are converted first.
         """
         try:
-            # Convert everything before saving
             metrics_serializable = self.convert_numpy(metrics)
-
-            # Debugging step to check if conversion worked
-            print(f"Debug (save_metrics): {metrics_serializable}")
-
-            output_file = os.path.join(self.cv_dir, f'{prefix}_metrics_{self.timestamp}.json')
-            
+            output_file = os.path.join(self.clf_dirs["cv"], f'{prefix}_metrics_{self.timestamp}.json')
             with open(output_file, 'w') as f:
                 json.dump(metrics_serializable, f, indent=4)
-
             self.logger.info(f"Saved metrics to {output_file}")
             return output_file
         except Exception as e:
             self.logger.error(f"Error saving metrics: {str(e)}")
             raise
 
-
     def calculate_aggregate_metrics(self, fold_results: List[Dict]) -> Tuple[Dict, Dict]:
         """
-        Calculate mean and standard deviation of metrics across folds,
-        ensuring all values are JSON serializable.
+        Calculate mean and std of metrics across folds.
         """
         try:
             metrics_df = pd.DataFrame(fold_results)
-
             mean_metrics = self.convert_numpy(metrics_df.mean().to_dict())
             std_metrics = self.convert_numpy(metrics_df.std().to_dict())
 
-            # Debugging: Print converted values
-            print(f"Debug (mean_metrics): {mean_metrics}")
-            print(f"Debug (std_metrics): {std_metrics}")
-
-            self.logger.info("Calculated aggregate metrics:")
+            self.logger.info("Calculated aggregate metrics (mean ± std):")
             for metric, value in mean_metrics.items():
                 self.logger.info(f"{metric}: {value:.4f} ± {std_metrics[metric]:.4f}")
-            
+
             return mean_metrics, std_metrics
         except Exception as e:
             self.logger.error(f"Error calculating aggregate metrics: {str(e)}")
             raise
 
-        
     def save_comparison_results(self, results: dict) -> dict:
         """
-        Save model comparison results in both JSON and CSV.
-
-        Args:
-            results (dict): Dictionary containing results for each model.
-
-        Returns:
-            dict: Summary of best-performing model.
+        Save model comparison results (JSON+CSV) in the 'final' directory.
         """
         self.logger.info("Saving comparison results...")
 
@@ -254,9 +209,8 @@ class BaseClassifier:
 
         summary = {"best_model": best_model, "best_f1_score": best_f1_score}
 
-        csv_path = os.path.join(self.final_dir, f"comparison_summary_{self.timestamp}.csv")
-        json_path = os.path.join(self.final_dir, f"comparison_summary_{self.timestamp}.json")
-
+        csv_path = os.path.join(self.clf_dirs["final"], f"comparison_summary_{self.timestamp}.csv")
+        json_path = os.path.join(self.clf_dirs["final"], f"comparison_summary_{self.timestamp}.json")
 
         pd.DataFrame(comparison_data).to_csv(csv_path, index=False)
         with open(json_path, "w") as f:
@@ -265,109 +219,73 @@ class BaseClassifier:
         self.logger.info(f"Comparison summary saved to {csv_path} and {json_path}")
         return summary
 
-    
     def save_fold_results(self, fold_metrics: List[Dict], prefix: str) -> None:
         """
-        Save fold results in both JSON and CSV format.
-
-        Args:
-            fold_metrics (List[Dict]): List of fold evaluation metrics.
-            prefix (str): Prefix for filenames.
+        Save fold results in JSON + CSV inside the 'cv' directory.
         """
-        output_json = os.path.join(self.cv_dir, f"{prefix}_{self.timestamp}.json")
-        output_csv = os.path.join(self.cv_dir, f"{prefix}_{self.timestamp}.csv")
+        output_json = os.path.join(self.clf_dirs["cv"], f"{prefix}_{self.timestamp}.json")
+        output_csv = os.path.join(self.clf_dirs["cv"], f"{prefix}_{self.timestamp}.csv")
 
         try:
-            # Convert NumPy to native types
             fold_metrics = self.convert_numpy(fold_metrics)
-
-            # Save as JSON
             with open(output_json, "w") as f:
                 json.dump(fold_metrics, f, indent=4)
             self.logger.info(f"Saved fold results to {output_json}")
 
-            # Save as CSV
             df = pd.DataFrame(fold_metrics)
             df.to_csv(output_csv, index=False)
             self.logger.info(f"Saved fold results to {output_csv}")
-
         except Exception as e:
             self.logger.error(f"Error saving fold results: {str(e)}")
             raise
 
- 
-    
     @staticmethod
     def clean_text(text: str) -> str:
         """
-        Clean and normalize input text
-        
-        Args:
-            text (str): Input text
-            
-        Returns:
-            str: Cleaned text
+        Clean and normalize a single text string.
         """
         try:
             if pd.isna(text):
                 return ""
-            # Convert to string and lowercase
             text = str(text).lower()
-            # Remove extra whitespace
             text = ' '.join(text.split())
             return text
         except Exception as e:
             logging.error(f"Error cleaning text: {str(e)}")
             return ""
-        
+
     def log_data_split(self, X_train, X_test, y_train, y_test):
-        """Log information about data splits"""
+        """Log info about data splits."""
         train_dist = pd.Series(y_train).value_counts(normalize=True)
         test_dist = pd.Series(y_test).value_counts(normalize=True)
-        
-        self.logger.info(f"\nData Split Information:")
+        self.logger.info("Data Split Info:")
         self.logger.info(f"Training set size: {len(X_train)}")
         self.logger.info(f"Test set size: {len(X_test)}")
         self.logger.info(f"Training class distribution:\n{train_dist}")
         self.logger.info(f"Test class distribution:\n{test_dist}")
-        
-    def train(self, texts: List[str], labels: np.ndarray) -> Tuple[List[Dict], Dict, Dict]:
+
+    def train(self, texts: List[str], labels: np.ndarray) -> Tuple[List[Dict], Dict, Dict, np.ndarray, np.ndarray]:
         """
-        Train and evaluate model using proper cross-validation strategy
-        
-        Implementation steps:
-        1. Split data into train (80%) and test (20%) sets
-        2. Perform k-fold cross-validation on training data
-        3. Use CV results to determine best model configuration
-        4. Train final model on entire training set
-        5. Evaluate on held-out test set
-        
-        Args:
-            texts (List[str]): List of text samples
-            labels (np.ndarray): Labels for text samples
-            
-        Returns:
-            Tuple[List[Dict], Dict, Dict]: 
-                - List of CV fold metrics
-                - Final test metrics
-                - Best model configuration
+        Train and evaluate model with cross-validation + final hold-out test.
+
+        Returns: 
+            (cv_metrics_list, final_test_metrics, best_config, final_labels, final_probs)
         """
         try:
             self.logger.info("Starting model training pipeline...")
-            
-            # 1. Initial train-test split
+
+            # 1. train/test split
             self.logger.info("Performing initial train-test split...")
             X_train, X_test, y_train, y_test = train_test_split(
-                texts, 
+                texts,
                 labels,
-                test_size=1-self.config.train_size,
+                test_size=1 - self.config.train_size,
                 stratify=labels,
                 random_state=self.config.random_state
             )
-            
             self.log_data_split(X_train, X_test, y_train, y_test)
-            
-            # 2. Initialize k-fold cross validation
+
+            # 2. K-fold cross-validation
             cv_metrics = []
             cv_configs = []
             skf = StratifiedKFold(
@@ -375,14 +293,13 @@ class BaseClassifier:
                 shuffle=True,
                 random_state=self.config.random_state
             )
-            
-            # 3. Perform cross-validation
+
             self.logger.info("Starting cross-validation...")
-            for fold, (train_idx, val_idx) in enumerate(skf.split(X_train, y_train)): 
+            for fold, (train_idx, val_idx) in enumerate(skf.split(X_train, y_train)):
                 self.logger.info(f"\nTraining fold {fold+1}/{self.config.num_iterations}")
-                
-                # Get fold data
-                if isinstance(X_train, pd.DataFrame) or isinstance(X_train, pd.Series):
+
+                # Grab fold data
+                if isinstance(X_train, (pd.DataFrame, pd.Series)):
                     fold_X_train = [X_train.iloc[i] for i in train_idx]
                     fold_y_train = y_train.iloc[train_idx]
                     fold_X_val = [X_train.iloc[i] for i in val_idx]
@@ -393,73 +310,69 @@ class BaseClassifier:
                     fold_X_val = [X_train[i] for i in val_idx]
                     fold_y_val = y_train[val_idx]
                 else:
-                    raise ValueError("Unsupported data type for X_train and y_train")
-                    
-                # Log fold distribution
-                self.logger.debug(f"Fold {fold} sizes - Train: {len(fold_X_train)}, Val: {len(fold_X_val)}")
-                
-                # Train and evaluate on this fold
-                fold_model, fold_metrics, fold_config = self.train_fold(
+                    raise ValueError("Unsupported data type for X_train/y_train")
+
+                # Train fold
+                fold_model, fold_metrics_dict, fold_config = self.train_fold(
                     fold_X_train, fold_y_train,
                     fold_X_val, fold_y_val,
                     fold
                 )
-                
-                # Track metrics and configs
-                fold_metrics['fold'] = fold
-                cv_metrics.append(fold_metrics)
+
+                fold_metrics_dict["fold"] = fold
+                cv_metrics.append(fold_metrics_dict)
                 cv_configs.append(fold_config)
-                
-                self.logger.info(f"Fold {fold} metrics: {fold_metrics}")
-            
-            # 4. Find best configuration
-            best_fold_idx = np.argmax([m['f1'] for m in cv_metrics])
+                self.logger.info(f"Fold {fold} metrics: {fold_metrics_dict}")
+
+            # 3. Decide best fold by F1
+            best_fold_idx = np.argmax([m["f1"] for m in cv_metrics])
             best_config = cv_configs[best_fold_idx]
-            self.logger.info(f"Best configuration from fold {best_fold_idx + 1}: {best_config}")
-            
-            # 5. Train final model on entire training set
+            self.logger.info(f"Best configuration from fold {best_fold_idx+1}: {best_config}")
+
+            # 4. Train final model on entire training set
             self.logger.info("Training final model on full training set...")
             final_model = self.train_final_model(X_train, y_train, best_config)
-            
-            # 6. Evaluate on held-out test set
+
+            # 5. Evaluate on 20% test
             self.logger.info("Evaluating on held-out test set...")
             test_metrics, final_labels, final_probs = self.evaluate_model(final_model, X_test, y_test)
             self.logger.info(f"Final test metrics: {test_metrics}")
 
-            
-            # Calculate and save metrics
+            # 6. Save metrics
             mean_cv_metrics, std_cv_metrics = self.calculate_aggregate_metrics(cv_metrics)
-            
-            # Save all results
             self.save_fold_results(cv_metrics, f"{self.__class__.__name__}_cv")
             self.save_metrics(test_metrics, f"{self.__class__.__name__}_test")
             self.save_metrics(mean_cv_metrics, f"{self.__class__.__name__}_cv_mean")
             self.save_metrics(std_cv_metrics, f"{self.__class__.__name__}_cv_std")
-            
+
             self.logger.info("Training pipeline completed successfully!")
             return cv_metrics, test_metrics, best_config, final_labels, final_probs
-        
-            
-            
+
         except Exception as e:
             self.logger.error(f"Error in training pipeline: {str(e)}")
             raise
-    
-    def train_fold(self, X_train, y_train, X_val, y_val, fold: int) -> Tuple[Any, Dict, Dict]:
-        """To be implemented by specific classifier classes"""
+
+    def train_fold(
+        self, X_train, y_train, X_val, y_val, fold: int
+    ) -> Tuple[Any, Dict, Dict]:
+        """
+        Train on a single fold. Must be overridden by each classifier.
+        """
         raise NotImplementedError
-        
-    def train_final_model(self, X_train, y_train, config: Dict) -> Any:
-        """To be implemented by specific classifier classes"""
+
+    def train_final_model(
+        self, X_train, y_train, config: Dict
+    ) -> Any:
+        """
+        Train final model on entire training set. Must be overridden.
+        """
         raise NotImplementedError
-        
-    def evaluate_model(self, model: Any, X_test: List[str], y_test: np.ndarray) -> Tuple[Dict, np.ndarray, np.ndarray]:
-        """To be implemented by specific classifier classes.
-        
-        Returns:
-            A tuple containing:
-                - A dictionary of evaluation metrics.
-                - An array of true labels.
-                - An array of predicted probabilities.
+
+    def evaluate_model(
+        self, model: Any, X_test: List[str], y_test: np.ndarray
+    ) -> Tuple[Dict, np.ndarray, np.ndarray]:
+        """
+        Evaluate on the test set. Must be overridden.
+        Returns: (test_metrics_dict, final_labels, final_probs)
         """
         raise NotImplementedError

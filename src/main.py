@@ -40,14 +40,14 @@ class ClassificationPipeline:
         # Performance tracker for timing, GPU usage, etc.
         self.performance_tracker = PerformanceMetrics(self.metrics_dir)
 
-        # Visualization manager for global comparisons
+        # Visualization manager for global comparisons (optional usage)
         self.visual_manager = VisualizationManager(
             os.path.join(self.config.output_dir, "comparison", "visualizations")
         )
 
     def setup_directories(self):
-        """Create top-level 'comparison' directories, plus a run folder with classifier subfolders."""
-        # Overall "comparison" folder
+        """Create top-level comparison directories, plus a run folder with classifier subfolders."""
+        # 1) "comparison" folder
         self.comparison_dir = os.path.join(self.config.output_dir, "comparison")
         self.logs_dir = os.path.join(self.comparison_dir, "logs")
         self.metrics_dir = os.path.join(self.comparison_dir, "metrics")
@@ -57,17 +57,35 @@ class ClassificationPipeline:
         for directory in [self.logs_dir, self.metrics_dir, self.visualizations_dir, self.results_dir]:
             os.makedirs(directory, exist_ok=True)
 
-        # A "run" folder for classifier subdirectories
+        # 2) "run" folder (unique timestamp)
         self.run_dir = os.path.join(self.config.output_dir, f"run_{self.timestamp}")
         os.makedirs(self.run_dir, exist_ok=True)
 
-        self.classifiers = ["logistic", "bert", "few_shot"]
+        # 3) "classifiers" subfolder under run_dir
         self.classifiers_dir = os.path.join(self.run_dir, "classifiers")
-        for clf in self.classifiers:
-            for subfolder in ["cv", "final", "visualizations"]:
-                os.makedirs(os.path.join(self.classifiers_dir, clf, subfolder), exist_ok=True)
+        os.makedirs(self.classifiers_dir, exist_ok=True)
 
-        # "overall" results in the run folder
+        # 4) Create subfolders for each classifier
+        self.classifier_subdirs = {}
+        for clf_name in ["logistic", "bert", "few_shot"]:
+            clf_root = os.path.join(self.classifiers_dir, clf_name)
+            os.makedirs(clf_root, exist_ok=True)
+
+            cv_dir = os.path.join(clf_root, "cv")
+            final_dir = os.path.join(clf_root, "final")
+            vis_dir = os.path.join(clf_root, "visualizations")
+
+            for subdir in [cv_dir, final_dir, vis_dir]:
+                os.makedirs(subdir, exist_ok=True)
+
+            self.classifier_subdirs[clf_name] = {
+                "root": clf_root,
+                "cv": cv_dir,
+                "final": final_dir,
+                "visualizations": vis_dir
+            }
+
+        # 5) "overall" folder for combined results
         self.overall_results_dir = os.path.join(self.run_dir, "overall")
         os.makedirs(self.overall_results_dir, exist_ok=True)
 
@@ -130,13 +148,14 @@ class ClassificationPipeline:
             self.logger.error(f"Error loading raw data: {str(e)}")
             raise
 
+    
     def run_pipeline(
         self, 
         raw_file: str, 
         tokenized_file: str, 
         run_logistic: bool = True, 
-        run_bert: bool = False,
-        run_few_shot: bool = False,
+        run_bert: bool = True,
+        run_few_shot: bool = True,
     ) -> Dict:
         """
         Run classification pipeline for logistic, BERT, and/or few-shot. 
@@ -146,7 +165,7 @@ class ClassificationPipeline:
         try:
             self.logger.info(f"Starting classification pipeline at {self.timestamp}")
 
-            # 1) Possibly load raw data (for logistic/few-shot)
+            # 1) Possibly load raw data (for logistic/few_shot)
             raw_df = None
             X_log, y_log = None, None
             if run_logistic or run_few_shot:
@@ -156,7 +175,7 @@ class ClassificationPipeline:
                 # Take 10% sample
                 raw_df = raw_df.sample(frac=0.1, random_state=42).reset_index(drop=True)
                 X_log = raw_df["text"].tolist()
-                y_log = raw_df["class"].values  # still strings "suicide"/"non-suicide" is fine
+                y_log = raw_df["class"].values  # still strings
 
             # 2) Possibly load pre-tokenized data for BERT
             bert_df = None
@@ -167,40 +186,44 @@ class ClassificationPipeline:
 
                 # Sample 10%
                 bert_df = bert_df.sample(frac=0.1, random_state=42).reset_index(drop=True)
-
-                # We'll create numeric index array for the BERT classifier
                 X_bert = np.arange(len(bert_df))
-                y_bert = np.where(bert_df["class"]=="suicide", 1, 0)
+                y_bert = np.where(bert_df["class"] == "suicide", 1, 0)
 
-            # 3) Build a list of (name, classifier_class) for each to run
+            # 3) Build a list of (name, classifier_class, subdirs)
             classifier_configs = []
             if run_logistic:
-                classifier_configs.append(("logistic", LogisticClassifier))
+                classifier_configs.append(
+                    ("logistic", LogisticClassifier, self.classifier_subdirs["logistic"])
+                )
             if run_bert:
-                classifier_configs.append(("bert", BERTClassifier))
+                classifier_configs.append(
+                    ("bert", BERTClassifier, self.classifier_subdirs["bert"])
+                )
             if run_few_shot:
-                classifier_configs.append(("few_shot", FewShotClassifier))
+                classifier_configs.append(
+                    ("few_shot", FewShotClassifier, self.classifier_subdirs["few_shot"])
+                )
 
             results = {}
 
             # 4) Train each classifier
-            for name, ClfClass in classifier_configs:
+            for name, ClfClass, clf_dirs in classifier_configs:
                 self.logger.info(f"Running {name} classifier...")
 
                 # Create classifier instance
                 if name == "logistic":
-                    classifier = ClfClass(self.config)
+                    classifier = ClfClass(self.config, clf_dirs)
                     X_input, y_input = X_log, y_log
 
                 elif name == "bert":
-                    classifier = ClfClass(self.config, df=bert_df)
+                    classifier = ClfClass(self.config, clf_dirs, df=bert_df)
                     X_input, y_input = X_bert, y_bert
 
                 elif name == "few_shot":
-                    classifier = ClfClass(self.config)
+                    classifier = ClfClass(self.config, clf_dirs)
                     X_input, y_input = X_log, y_log
 
-                # 5) Track performance (time, GPU usage)
+                # 5) Track performance
                 try:
                     out = self.performance_tracker.track_performance(
                         classifier_name=name,
@@ -210,23 +233,57 @@ class ClassificationPipeline:
                     (cv_metrics, final_metrics, best_config) = out[:3]
                     final_labels, final_probs = out[3], out[4]
 
+                    # Keep for later comparison
                     results[name] = (cv_metrics, final_metrics, best_config)
 
-                    # Possibly plot ROC
+                    # If we have final labels/probs, do more plots
                     if final_labels is not None and final_probs is not None:
-                        clf_vis_dir = os.path.join(self.classifiers_dir, name, "visualizations")
-                        VisualizationManager(clf_vis_dir).plot_roc_curves(
+                        # Convert probabilities to 0/1 predictions
+                        final_preds = (final_probs >= 0.5).astype(int)
+
+                        vis_path = clf_dirs["visualizations"]
+                        vis_manager = VisualizationManager(vis_path)
+
+                        # 1) Plot ROC
+                        vis_manager.plot_roc_curves(
                             y_true=final_labels,
                             y_prob=final_probs,
                             model_name=name,
                             fold=None
                         )
 
+                        # 2) Confusion Matrix
+                        vis_manager.plot_confusion_matrix(
+                            y_true=final_labels,
+                            y_pred=final_preds,
+                            model_name=name,
+                            fold=None
+                        )
+
+                        # 3) Class Distribution
+                        # We'll show how many 'suicide' vs 'non-suicide' predictions
+                        distribution_list = [
+                            {
+                                "Class": "suicide",
+                                "Count": int(final_preds.sum()),
+                                "Proportion": float(final_preds.mean())
+                            },
+                            {
+                                "Class": "non-suicide",
+                                "Count": int(len(final_preds) - final_preds.sum()),
+                                "Proportion": float(1.0 - final_preds.mean())
+                            },
+                        ]
+                        vis_manager.plot_class_distribution(
+                            class_distributions=distribution_list,
+                            model_name=name
+                        )
+
                 except Exception as e:
                     self.logger.error(f"Error in {name} classifier: {str(e)}")
                     continue
 
-            # 6) Compare results
+            # 6) Compare results (overall)
             if results:
                 summary = self.save_comparison_results(results)
                 self.logger.info("Pipeline completed successfully.")
@@ -255,13 +312,13 @@ class ClassificationPipeline:
         best_f1_score = 0.0
 
         for model_name, (fold_metrics, final_metrics, best_config) in results.items():
-            # Check final F1
+            # Pick best by final F1
             if final_metrics and "f1" in final_metrics:
                 if final_metrics["f1"] > best_f1_score:
                     best_f1_score = final_metrics["f1"]
                     best_model = model_name
 
-            # Save cross-validation results inside the classifier-specific "cv" folder
+            # Save cross-validation results
             clf_cv_dir = os.path.join(self.classifiers_dir, model_name, "cv")
             cv_file = os.path.join(clf_cv_dir, "cross_validation_results.json")
             with open(cv_file, "w") as f:
@@ -272,7 +329,7 @@ class ClassificationPipeline:
                 }, f, indent=4)
             self.logger.info(f"Saved CV results for {model_name} to {cv_file}")
 
-            # Optionally plot metrics across folds
+            # Optionally plot iteration metrics
             if fold_metrics:
                 clf_vis_dir = os.path.join(self.classifiers_dir, model_name, "visualizations")
                 VisualizationManager(clf_vis_dir).plot_metrics_across_iterations(
@@ -293,24 +350,14 @@ class ClassificationPipeline:
         self.logger.info(f"Overall comparison summary saved to {overall_summary_file}")
         return summary
 
-
-    # --------------------------------------------------------------------
     # Optionally, a "run_final_training_and_evaluation" approach if needed
-    # --------------------------------------------------------------------
     def run_final_training_and_evaluation(self, raw_file, tokenized_file):
         """
         Example approach if you want to re-run final training after picking best model from
         stored cross-validation results. 
-        But this is optional.
         """
         self.logger.info("🚀 Starting final training/evaluation pipeline... (optional)")
-
-        # 1. Load cross-validation results from a previous run
-        # 2. Decide best model
-        # 3. Load raw or tokenized data
-        # 4. Train final model on entire 80%
-        # 5. Evaluate on 20%
-
+        # Placeholder for future final training code
         pass
 
 
@@ -329,7 +376,7 @@ def main():
         # 2) Create pipeline
         pipeline = ClassificationPipeline(config)
 
-        # 3) Decide file paths
+        # 3) Input file paths
         raw_file = "../data/raw/Suicide_Detection.csv"
         tokenized_file = "../data/tokenized/tokenized_data.pkl"
 
@@ -351,7 +398,7 @@ def main():
                 print(f"Best F1 Score: {summary['best_f1_score']:.4f}")
 
     except Exception as e:
-        logging.error(f"❌ Pipeline failed: {str(e)}")
+        logging.error(f" Pipeline failed: {str(e)}")
         sys.exit(1)
 
 

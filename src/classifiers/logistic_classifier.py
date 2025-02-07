@@ -11,88 +11,90 @@ import json
 
 class LogisticClassifier(BaseClassifier):
     """
-    Logistic Regression classifier implementation with cross-validation
-    
-    Uses TF-IDF vectorization for text preprocessing
-    Implements proper CV strategy with holdout test set
-    Includes model persistence and comprehensive logging
+    Logistic Regression classifier with cross-validation.
+
+    Ensures that labels are consistently numeric (0 = non-suicide, 1 = suicide).
     """
 
-    def __init__(self, config):
-        super().__init__(config)
-        self.vectorizer = None 
-        
+    def __init__(self, config: ModelConfig, clf_dirs: dict):
+        """
+        Args:
+            config (ModelConfig): training config
+            clf_dirs (dict): subdirectories from pipeline
+        """
+        super().__init__(config, clf_dirs)
+        self.vectorizer = None  # TF-IDF vectorizer
+        self.model = None  # Logistic Regression Model
 
-    
+    # ---------------------------------------------------------------------
+    # Utility methods (save_model, save_metrics, etc.)
+    # ---------------------------------------------------------------------
     def save_model(self, model, prefix="final_model"):
-        model_path = os.path.join(self.final_dir, f"{prefix}_{self.timestamp}.joblib")
+        """
+        Save a .joblib model in the 'final' directory.
+        """
+        model_path = os.path.join(
+            self.clf_dirs["final"],
+            f"{prefix}_{self.timestamp}.joblib"
+        )
         joblib.dump(model, model_path)
         self.logger.info(f"Model saved to {model_path}")
 
     def save_metrics(self, metrics, prefix="metrics"):
         """
-        Save evaluation metrics to file.
-
-        Args:
-            metrics (dict): Dictionary containing evaluation metrics.
-            prefix (str): Prefix for the output file name.
+        Save evaluation metrics as JSON in 'cv' directory.
         """
-        metrics_file = os.path.join(self.cv_dir, f"{prefix}_{self.timestamp}.json")
-
-        with open(metrics_file, "w") as f:
+        metrics_path = os.path.join(
+            self.clf_dirs["cv"],
+            f"{prefix}_{self.timestamp}.json"
+        )
+        with open(metrics_path, "w") as f:
             json.dump(metrics, f, indent=4)
-        self.logger.info(f"Metrics saved to {metrics_file}")
+        self.logger.info(f"Metrics saved to {metrics_path}")
 
     def save_fold_results(self, fold_results: List[Dict], prefix: str) -> str:
         """
-        Save results from all folds
-        
-        Args:
-            fold_results (List[Dict]): List of dictionaries containing fold results
-            prefix (str): Prefix for the output file name
-            
-        Returns:
-            str: Path to saved results file
+        Save cross-validation fold results as CSV in 'cv' directory.
         """
-        try:
-            output_file = os.path.join(self.cv_dir, f'{prefix}_fold_results_{self.timestamp}.csv')
-            pd.DataFrame(fold_results).to_csv(output_file, index=False)
-            self.logger.info(f"Saved fold results to {output_file}")
-            return output_file
-        except Exception as e:
-            self.logger.error(f"Error saving fold results: {str(e)}")
-            raise
+        out_file = os.path.join(
+            self.clf_dirs["cv"],
+            f"{prefix}_fold_results_{self.timestamp}.csv"
+        )
+        pd.DataFrame(fold_results).to_csv(out_file, index=False)
+        self.logger.info(f"Saved fold results to {out_file}")
+        return out_file
 
+    # ---------------------------------------------------------------------
+    # Preprocessing text (TF-IDF)
+    # ---------------------------------------------------------------------
     def preprocess_data(self, texts: List[str], is_training: bool = False) -> np.ndarray:
         """
-        Preprocess text data using TF-IDF vectorization
-        
-        Args:
-            texts (List[str]): List of text samples
-            is_training (bool): Whether this is training data
-            
-        Returns:
-            np.ndarray: Vectorized text features
+        Convert raw texts → TF-IDF features.
+        If is_training=True and vectorizer is None, we fit it here.
+        Otherwise, we just transform.
         """
         self.logger.info(f"Preprocessing {'training' if is_training else 'evaluation'} data...")
         self.logger.info(f"Number of texts: {len(texts)}")
-        
+
         if is_training and self.vectorizer is None:
-            self.logger.info("Initializing and fitting TF-IDF vectorizer...")
+            self.logger.info("Initializing TF-IDF vectorizer (fitting)...")
             self.vectorizer = TfidfVectorizer(
-                max_features=3000, #reduce the number of features to 3000 NEW
+                max_features=3000,
                 min_df=2,
                 max_df=0.95
             )
             X = self.vectorizer.fit_transform(texts)
             self.logger.info(f"Vocabulary size: {len(self.vectorizer.vocabulary_)}")
             return X
-            
+
         if self.vectorizer is None:
-            raise ValueError("Vectorizer not fitted. Call with training data first.")
-            
+            raise ValueError("Vectorizer not fitted yet. Provide training data first.")
+
         return self.vectorizer.transform(texts)
-        
+
+    # ---------------------------------------------------------------------
+    # Single fold training
+    # ---------------------------------------------------------------------
     def train_fold(
         self,
         X_train: List[str],
@@ -102,253 +104,121 @@ class LogisticClassifier(BaseClassifier):
         fold: int
     ) -> Tuple[LogisticRegression, Dict[str, float], Dict]:
         """
-        Train model on a single fold with statistical validation.
-
-        Args:
-            X_train (List[str]): Training texts.
-            y_train (np.ndarray): Training labels.
-            X_val (List[str]): Validation texts.
-            y_val (np.ndarray): Validation labels.
-            fold (int): Current fold number.
-
-        Returns:
-            Tuple[LogisticRegression, Dict[str, float], Dict]:
-                - Trained Logistic Regression model.
-                - Performance metrics (accuracy, precision, recall, F1-score, etc.).
-                - Model configuration.
+        Train a single cross-validation fold.
         """
+        self.logger.info(f"===== Training fold {fold+1} =====")
+        self.logger.info(f"Fold data sizes: train={len(X_train)}, val={len(X_val)}")
 
-        self.logger.info(f"Training fold {fold+1}")
-        self.logger.info(f"Training set size: {len(X_train)}, Validation set size: {len(X_val)}")
-    
-        # Validate that raw data is being used
+        # Ensure X_train are strings
         if not isinstance(X_train[0], str):
-            raise ValueError("LogisticClassifier requires raw text data for training.")
+            raise ValueError("LogisticClassifier expects raw text strings for training.")
 
-        # Debug label information
-        self.logger.debug(f"Original label types - Training: {type(y_train[0])}, Validation: {type(y_val[0])}")
-        self.logger.debug(f"Original unique labels - Training: {np.unique(y_train)}, Validation: {np.unique(y_val)}")
-    
-        # Convert labels to numeric values (if they are still strings)
-        if isinstance(y_train[0], str):
-            y_train = np.array([1 if label == "suicide" else 0 for label in y_train], dtype=int)
-            y_val = np.array([1 if label == "suicide" else 0 for label in y_val], dtype=int)
-            self.logger.info("Converted string labels to numeric (1 = suicide, 0 = non-suicide)")
+        # Ensure labels are numeric
+        y_train = np.array([1 if lbl == "suicide" else 0 for lbl in y_train], dtype=int)
+        y_val = np.array([1 if lbl == "suicide" else 0 for lbl in y_val], dtype=int)
 
-        # Log label types
-        self.logger.debug(f"Final label types - Training: {type(y_train[0])}, Validation: {type(y_val[0])}")
-        self.logger.debug(f"Final unique labels - Training: {np.unique(y_train)}, Validation: {np.unique(y_val)}")
-
-        # Preprocess data
+        # TF-IDF
         X_train_vec = self.preprocess_data(X_train, is_training=True)
         X_val_vec = self.preprocess_data(X_val, is_training=False)
-    
-        # Initialize and train model
-        self.logger.info("Training Logistic Regression model...")
+
+        # Initialize logistic regression
         model = LogisticRegression(
             max_iter=1000,
             class_weight='balanced',
             random_state=self.config.random_state + fold
         )
+        self.logger.info("Fitting logistic regression on fold data...")
         model.fit(X_train_vec, y_train)
-    
-        # Get predictions
+
+        # Predict and convert predictions to numeric (0/1)
         y_pred = model.predict(X_val_vec)
         y_prob = model.predict_proba(X_val_vec)[:, 1]
-    
-        try:
-            # Calculate metrics
-            metrics = {
-                'accuracy': accuracy_score(y_val, y_pred),
-                'precision': precision_score(y_val, y_pred, pos_label=1),
-                'recall': recall_score(y_val, y_pred, pos_label=1),
-                'f1': f1_score(y_val, y_pred, pos_label=1),
-                'roc_auc': roc_auc_score(np.array([1 if label == "suicide" else 0 for label in y_val]), y_prob)
-            }
-        
-            self.logger.info(f"Fold {fold+1} metrics: {metrics}")
-        
-        except Exception as e:
-            self.logger.error(f"Error calculating metrics: {str(e)}")
-            self.logger.error(f"y_val unique values: {np.unique(y_val)}")
-            self.logger.error(f"y_pred unique values: {np.unique(y_pred)}")
-            raise
-        finally:
-            # Cleanup resources
-            del X_train_vec, X_val_vec
-        
-    
+
+        # Evaluate
+        metrics_dict = {
+            'accuracy': accuracy_score(y_val, y_pred),
+            'precision': precision_score(y_val, y_pred),
+            'recall': recall_score(y_val, y_pred),
+            'f1': f1_score(y_val, y_pred),
+            'roc_auc': roc_auc_score(y_val, y_prob)
+        }
+        self.logger.info(f"Fold {fold+1} metrics: {metrics_dict}")
+
         # Save fold model
-        model_path = os.path.join(
-            self.cv_dir,
+        fold_model_path = os.path.join(
+            self.clf_dirs["cv"],
             f"logistic_model_fold_{fold}_{self.timestamp}.joblib"
         )
+        joblib.dump(model, fold_model_path)
+        self.logger.info(f"Saved fold model to {fold_model_path}")
 
-        joblib.dump(model, model_path)
-        self.logger.info(f"Saved fold model to {model_path}")
-    
-        # Track configuration
-        config = {
-            'max_iter': 1000,
-            'class_weight': 'balanced',
-            'vocab_size': len(self.vectorizer.vocabulary_),
-            'fold': fold
-        }
-    
-        return model, metrics, config
+        return model, metrics_dict, {}
 
-
-    def train_final_model(self,
-                        X_train: List[str],
-                        y_train: np.ndarray,
-                        config: Dict) -> LogisticRegression:
+    # ---------------------------------------------------------------------
+    # Final training after best fold
+    # ---------------------------------------------------------------------
+    def train_final_model(
+        self,
+        X_train: List[str],
+        y_train: np.ndarray,
+        config: Dict
+    ) -> LogisticRegression:
         """
-        Train final model on entire training set.
-        
-        Args:
-            X_train: Training texts.
-            y_train: Training labels.
-            config: Best configuration from CV.
-            
-        Returns:
-            LogisticRegression: Trained final model.
+        Train final logistic model on entire training set using the best config.
         """
-        self.logger.info("Training final model on complete training set...")
-        self.logger.info(f"Training set size: {len(X_train)}")
+        self.logger.info("===== Training final logistic model on full training set =====")
 
-        # Preprocess data
+        # Ensure labels are numeric
+        y_train = np.array([1 if lbl == "suicide" else 0 for lbl in y_train], dtype=int)
+
+        # TF-IDF
         X_train_vec = self.preprocess_data(X_train, is_training=True)
 
-        # Initialize and train model
+        # Train final model
         model = LogisticRegression(
-            max_iter=config['max_iter'],
-            class_weight=config['class_weight'],
+            max_iter=config.get('max_iter', 1000),
+            class_weight=config.get('class_weight', 'balanced'),
             random_state=self.config.random_state
         )
-
-        self.logger.info("Fitting final model...")
         model.fit(X_train_vec, y_train)
 
-        # ✅ Store the trained model inside the class
-        self.model = model  
-
-        # Save model and vectorizer
-        model_path = os.path.join(
-            self.final_dir,
-            f"logistic_model_final_{self.timestamp}.joblib"
-        )
-
-        vectorizer_path = os.path.join(
-            self.config.output_dir,
-            f"tfidf_vectorizer_{self.timestamp}.joblib"
-        )
-
-        joblib.dump(model, model_path)
-        joblib.dump(self.vectorizer, vectorizer_path)
-
-        self.logger.info(f"Saved final model to {model_path}")
-        self.logger.info(f"Saved vectorizer to {vectorizer_path}")
-
+        # Save final model
+        self.save_model(model, prefix="logistic_model_final")
+        self.model = model
         return model
 
-        
-    def evaluate_model(self,
-                    model: LogisticRegression,
-                    X_test: List[str],
-                    y_test: np.ndarray) -> Tuple[Dict, np.ndarray, np.ndarray]:
+    # ---------------------------------------------------------------------
+    # Evaluate on Test Set
+    # ---------------------------------------------------------------------
+    def evaluate_model(
+        self,
+        model: LogisticRegression,
+        X_test: List[str],
+        y_test: np.ndarray
+    ) -> Tuple[Dict, np.ndarray, np.ndarray]:
         """
-        Evaluate model on test set.
-        
-        Args:
-            model: Trained Logistic Regression model.
-            X_test: List of test texts.
-            y_test: Test labels.
-            
-        Returns:
-            Tuple[Dict, np.ndarray, np.ndarray]:
-                - A dictionary of evaluation metrics.
-                - An array of true labels.
-                - An array of predicted probabilities for the positive class.
+        Evaluate final model on the test set.
         """
-        self.logger.info("Evaluating on test set...")
-        self.logger.info(f"Test set size: {len(X_test)}")
-        
-        # Preprocess test data
+        self.logger.info("===== Evaluating logistic model on test set =====")
+
+        # Ensure labels are numeric
+        y_test = np.array([1 if lbl == "suicide" else 0 for lbl in y_test], dtype=int)
+
+        # Vectorize X_test
         X_test_vec = self.preprocess_data(X_test, is_training=False)
-        
-        # Get predictions
-        y_pred = np.array([1 if label == "suicide" else 0 for label in model.predict(X_test_vec)])
+
+        # Predictions
+        y_pred = model.predict(X_test_vec)
         y_prob = model.predict_proba(X_test_vec)[:, 1]
-        
-        # Ensure numeric labels for evaluation
-        y_test = np.array([1 if label == "suicide" else 0 for label in y_test])
-        
 
-        # Calculate metrics
-        metrics = {
+        # Metrics
+        metrics_dict = {
             'accuracy': accuracy_score(y_test, y_pred),
-            'precision': precision_score(y_test, y_pred, pos_label=1),
-            'recall': recall_score(y_test, y_pred, pos_label=1),
-            'f1': f1_score(y_test, y_pred, pos_label=1),
-            'roc_auc': roc_auc_score(y_test, y_prob)  # No need for explicit casting
+            'precision': precision_score(y_test, y_pred),
+            'recall': recall_score(y_test, y_pred),
+            'f1': f1_score(y_test, y_pred),
+            'roc_auc': roc_auc_score(y_test, y_prob)
         }
-        
-        self.logger.info(f"Test set metrics: {metrics}")
-        
-        # Save predictions to CSV
-        pd.DataFrame({
-            'text': X_test,
-            'prediction': y_pred,
-            'actual': y_test,
-            'probability': y_prob
-        }).to_csv(
-            f"{self.config.output_dir}/logistic_test_predictions_{self.timestamp}.csv",
-            index=False
-        )
-        
-        return metrics, y_test.tolist(), y_prob.tolist()
+        self.logger.info(f"Test set metrics: {metrics_dict}")
 
-
-
-        
-    def predict(self, texts: List[str]) -> np.ndarray:
-        """
-        Make predictions on new texts
-        
-        Args:
-            texts (List[str]): List of text samples
-            
-        Returns:
-            np.ndarray: Predicted labels
-        """
-        if self.model is None or self.vectorizer is None:
-            raise ValueError("Model or vectorizer not initialized. Train the model first.")
-            
-        self.logger.info(f"Making predictions on {len(texts)} new texts")
-        X = self.preprocess_data(texts, is_training=False)
-        
-        predictions = self.model.predict(X)
-        self.logger.info("Predictions complete")
-        
-        return predictions
-        
-    def predict_proba(self, texts: List[str]) -> np.ndarray:
-        """
-        Get prediction probabilities for new texts
-        
-        Args:
-            texts (List[str]): List of text samples
-            
-        Returns:
-            np.ndarray: Predicted probabilities for positive class
-        """
-        if self.model is None or self.vectorizer is None:
-            raise ValueError("Model or vectorizer not initialized. Train the model first.")
-            
-        self.logger.info(f"Getting prediction probabilities for {len(texts)} texts")
-        X = self.preprocess_data(texts, is_training=False)
-        
-        probabilities = self.model.predict_proba(X)[:, 1]
-        self.logger.info("Probability calculations complete")
-        
-        return probabilities
+        return metrics_dict, y_test, y_prob

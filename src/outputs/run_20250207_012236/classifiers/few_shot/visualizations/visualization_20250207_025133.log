@@ -1,0 +1,4 @@
+2025-02-07 02:51:33,799 - utils.visualization - INFO - Logging setup complete
+2025-02-07 02:51:33,804 - utils.visualization - INFO - Initialized VisualizationManager with output dir: outputs/run_20250207_012236/classifiers/few_shot/visualizations
+2025-02-07 02:51:33,804 - utils.visualization - INFO - Plotting metrics across iterations for few_shot
+2025-02-07 02:51:44,695 - utils.visualization - INFO - Saved plot to outputs/run_20250207_012236/classifiers/few_shot/visualizations/metrics_across_iterations_few_shot_20250207_025133.png

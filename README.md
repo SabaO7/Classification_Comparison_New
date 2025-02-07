@@ -5,7 +5,7 @@ This project implements a **multi-classifier text classification framework** for
 
 1. **Logistic Regression Classifier** (TF-IDF based)
 2. **BERT Fine-Tuned Classifier**
-3. **Few-Shot Learning with gpt-3.5-turbo**
+3. **Few-Shot Learning with gpt-4o-mini**
 
 The framework is designed to **handle preprocessing, model training, evaluation, debugging, and visualization** with modularity and scalability in mind.
 
@@ -82,11 +82,11 @@ A transformer-based classifier leveraging Hugging Face’s `transformers` librar
 - **evaluate_model**: Evaluates the model on the test set.
 - **save_model**: Saves model weights and tokenizer.
 
-### 3. **Few-Shot Learning (gpt-3.5-turbo)**
-Uses OpenAI’s gpt-3.5-turbo with a few predefined examples instead of full dataset training.
+### 3. **Few-Shot Learning (gpt-4o-mini)**
+Uses OpenAI’s gpt-4o-mini with a few predefined examples instead of full dataset training.
 #### Key Methods:
 - **train**: Uses predefined examples.
-- **predict**: Runs inference using gpt-3.5-turbo.
+- **predict**: Runs inference using gpt-4o-mini.
 - **evaluate**: Measures performance.
 
 ---

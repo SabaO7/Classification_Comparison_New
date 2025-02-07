@@ -126,7 +126,7 @@ class FewShotClassifier(BaseClassifier):
         prompt = self.few_shot_prompt.format(input=text)
         try:
             response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": "You are a helpful assistant."},
                     {"role": "user", "content": prompt},
